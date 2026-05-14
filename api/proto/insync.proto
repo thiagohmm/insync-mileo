@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package insync;
+
+option go_package = "github.com/thiagohmm/insync-clone/api/proto/insync";
+
+service InsyncService {
+  // Configurações enviadas do CLI para o Daemon
+  rpc GetAuthURL(GetAuthURLRequest) returns (GetAuthURLResponse);
+  rpc AddAccount(AddAccountRequest) returns (AddAccountResponse);
+  rpc ConfigureSync(ConfigureSyncRequest) returns (ConfigureSyncResponse);
+  
+  // Acompanhamento de status em tempo real
+  rpc GetSyncStatus(SyncStatusRequest) returns (stream SyncStatusResponse);
+  
+  // Listagem de arquivos
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+}
+
+enum SyncMode {
+  BASE_SYNC = 0;
+  FULL_SYNC = 1;
+}
+
+enum Provider {
+  GOOGLE_DRIVE = 0;
+  ONEDRIVE = 1;
+}
+
+message GetAuthURLRequest {
+  Provider provider = 1;
+}
+
+message GetAuthURLResponse {
+  string url = 1;
+}
+
+message AddAccountRequest {
+  Provider provider = 1;
+  string auth_code = 2; // Simplificação para o fluxo OAuth
+}
+
+message AddAccountResponse {
+  bool success = 1;
+  string account_id = 2;
+  string error_message = 3;
+}
+
+message ConfigureSyncRequest {
+  string account_id = 1;
+  string local_path = 2;
+  string remote_folder_id = 3;
+  SyncMode mode = 4;
+}
+
+message ConfigureSyncResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message SyncStatusRequest {}
+
+message SyncStatusResponse {
+  string file_path = 1;
+  string status = 2; // e.g., "Uploading", "Downloading", "Synced", "Error"
+  int32 progress_percentage = 3;
+  int64 total_size = 4;
+  int64 processed_size = 5;
+  Provider provider = 6;
+}
+
+message ListFilesRequest {
+  // ID da pasta remota (ex.: "root" no Google Drive).
+  string folder_path = 1;
+  // Conta autenticada retornada por AddAccount; obrigatório para listar na nuvem.
+  string account_id = 2;
+}
+
+message FileInfo {
+  string name = 1;
+  string path = 2;
+  bool is_directory = 3;
+  int64 size = 4;
+  string last_modified = 5;
+  string etag = 6;
+}
+
+message ListFilesResponse {
+  repeated FileInfo files = 1;
+}

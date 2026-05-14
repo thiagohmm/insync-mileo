@@ -1,0 +1,30 @@
+# Binários e artefactos de build
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+/build/
+
+# Go
+coverage.out
+coverage.html
+*.test
+vendor/
+
+# Dados locais e segredos
+insync.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+
+# IDE e SO
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
