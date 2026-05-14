@@ -3,9 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -363,7 +368,71 @@ func (m model) View() string {
 	return s
 }
 
+const serverAddr = "localhost:50051"
+
+// serverRunning checks whether a process accepts TCP connections on serverAddr.
+func serverRunning() bool {
+	conn, err := net.DialTimeout("tcp", serverAddr, 500*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+// findServerBinary resolves the path to the insync-server binary.
+// It first tries alongside the CLI executable, then falls back to the cwd.
+func findServerBinary() string {
+	// Attempt to resolve relative to the running CLI binary
+	if exe, err := os.Executable(); err == nil {
+		candidate := filepath.Join(filepath.Dir(exe), "insync-server")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	// Fallback: current working directory
+	if abs, err := filepath.Abs("insync-server"); err == nil {
+		if _, statErr := os.Stat(abs); statErr == nil {
+			return abs
+		}
+	}
+	return "insync-server"
+}
+
+// startServer launches a detached insync-server process that survives when the CLI exits.
+func startServer() *exec.Cmd {
+	binary := findServerBinary()
+	cmd := exec.Command(binary)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // detach from CLI process group
+	cmd.Stdin = nil
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		log.Fatalf("failed to start server (%s): %v", binary, err)
+	}
+	fmt.Println("Server started (background).")
+	return cmd
+}
+
+// waitForServer blocks until serverRunning() returns true or a timeout is reached.
+func waitForServer() {
+	start := time.Now()
+	for time.Since(start) < 10*time.Second {
+		if serverRunning() {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	log.Fatal("timed out waiting for the server to start")
+}
+
 func main() {
+	// Auto-start the server if it's not already running.
+	if !serverRunning() {
+		startServer()
+		waitForServer()
+	}
+
 	conn, err := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
