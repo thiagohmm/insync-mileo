@@ -43,6 +43,7 @@ func (r *SQLiteRepository) createTables() error {
 			remote_folder_id TEXT NOT NULL,
 			mode INTEGER NOT NULL,
 			provider TEXT NOT NULL,
+			is_directory BOOLEAN NOT NULL DEFAULT 1,
 			FOREIGN KEY (account_id) REFERENCES accounts(id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS file_metadata (
@@ -63,6 +64,7 @@ func (r *SQLiteRepository) createTables() error {
 			return err
 		}
 	}
+	_, _ = r.db.Exec(`ALTER TABLE sync_configs ADD COLUMN is_directory BOOLEAN NOT NULL DEFAULT 1`)
 	return nil
 }
 
@@ -103,17 +105,33 @@ func (r *SQLiteRepository) GetLatestAccountByProvider(ctx context.Context, provi
 }
 
 func (r *SQLiteRepository) SaveSyncConfig(ctx context.Context, config *domain.SyncConfig) error {
-	query := `INSERT INTO sync_configs (account_id, local_path, remote_folder_id, mode, provider) VALUES (?, ?, ?, ?, ?)`
-	result, err := r.db.ExecContext(ctx, query, config.AccountID, config.LocalPath, config.RemoteFolderID, int(config.Mode), string(config.Provider))
+	query := `INSERT INTO sync_configs (account_id, local_path, remote_folder_id, mode, provider, is_directory)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(local_path) DO UPDATE SET
+			account_id = excluded.account_id,
+			remote_folder_id = excluded.remote_folder_id,
+			mode = excluded.mode,
+			provider = excluded.provider,
+			is_directory = excluded.is_directory`
+	result, err := r.db.ExecContext(ctx, query, config.AccountID, config.LocalPath, config.RemoteFolderID, int(config.Mode), string(config.Provider), config.IsDirectory)
 	if err != nil {
 		return err
 	}
 	config.ID, _ = result.LastInsertId()
+	if config.ID == 0 {
+		saved, err := r.GetSyncConfigByPath(ctx, config.LocalPath)
+		if err != nil {
+			return err
+		}
+		if saved != nil {
+			config.ID = saved.ID
+		}
+	}
 	return nil
 }
 
 func (r *SQLiteRepository) ListSyncConfigs(ctx context.Context) ([]domain.SyncConfig, error) {
-	query := `SELECT id, account_id, local_path, remote_folder_id, mode, provider FROM sync_configs`
+	query := `SELECT id, account_id, local_path, remote_folder_id, mode, provider, is_directory FROM sync_configs`
 	rows, err := r.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -124,7 +142,7 @@ func (r *SQLiteRepository) ListSyncConfigs(ctx context.Context) ([]domain.SyncCo
 	for rows.Next() {
 		var c domain.SyncConfig
 		var provider string
-		if err := rows.Scan(&c.ID, &c.AccountID, &c.LocalPath, &c.RemoteFolderID, (*int)(&c.Mode), &provider); err != nil {
+		if err := rows.Scan(&c.ID, &c.AccountID, &c.LocalPath, &c.RemoteFolderID, (*int)(&c.Mode), &provider, &c.IsDirectory); err != nil {
 			return nil, err
 		}
 		c.Provider = domain.Provider(provider)
@@ -134,11 +152,11 @@ func (r *SQLiteRepository) ListSyncConfigs(ctx context.Context) ([]domain.SyncCo
 }
 
 func (r *SQLiteRepository) GetSyncConfigByPath(ctx context.Context, path string) (*domain.SyncConfig, error) {
-	query := `SELECT id, account_id, local_path, remote_folder_id, mode, provider FROM sync_configs WHERE local_path = ?`
+	query := `SELECT id, account_id, local_path, remote_folder_id, mode, provider, is_directory FROM sync_configs WHERE local_path = ?`
 	row := r.db.QueryRowContext(ctx, query, path)
 	var c domain.SyncConfig
 	var provider string
-	if err := row.Scan(&c.ID, &c.AccountID, &c.LocalPath, &c.RemoteFolderID, (*int)(&c.Mode), &provider); err != nil {
+	if err := row.Scan(&c.ID, &c.AccountID, &c.LocalPath, &c.RemoteFolderID, (*int)(&c.Mode), &provider, &c.IsDirectory); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}

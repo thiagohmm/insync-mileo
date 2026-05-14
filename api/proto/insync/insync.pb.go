@@ -319,6 +319,8 @@ type ConfigureSyncRequest struct {
 	LocalPath      string                 `protobuf:"bytes,2,opt,name=local_path,json=localPath,proto3" json:"local_path,omitempty"`
 	RemoteFolderId string                 `protobuf:"bytes,3,opt,name=remote_folder_id,json=remoteFolderId,proto3" json:"remote_folder_id,omitempty"`
 	Mode           SyncMode               `protobuf:"varint,4,opt,name=mode,proto3,enum=insync.SyncMode" json:"mode,omitempty"`
+	IsDirectory    bool                   `protobuf:"varint,5,opt,name=is_directory,json=isDirectory,proto3" json:"is_directory,omitempty"`
+	DisplayName    string                 `protobuf:"bytes,6,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -379,6 +381,20 @@ func (x *ConfigureSyncRequest) GetMode() SyncMode {
 		return x.Mode
 	}
 	return SyncMode_BASE_SYNC
+}
+
+func (x *ConfigureSyncRequest) GetIsDirectory() bool {
+	if x != nil {
+		return x.IsDirectory
+	}
+	return false
+}
+
+func (x *ConfigureSyncRequest) GetDisplayName() string {
+	if x != nil {
+		return x.DisplayName
+	}
+	return ""
 }
 
 type ConfigureSyncResponse struct {
@@ -735,6 +751,154 @@ func (x *ListFilesResponse) GetFiles() []*FileInfo {
 	return nil
 }
 
+type SyncedFile struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Mode          SyncMode               `protobuf:"varint,2,opt,name=mode,proto3,enum=insync.SyncMode" json:"mode,omitempty"`
+	LocalPath     string                 `protobuf:"bytes,3,opt,name=local_path,json=localPath,proto3" json:"local_path,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SyncedFile) Reset() {
+	*x = SyncedFile{}
+	mi := &file_api_proto_insync_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SyncedFile) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SyncedFile) ProtoMessage() {}
+
+func (x *SyncedFile) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_insync_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SyncedFile.ProtoReflect.Descriptor instead.
+func (*SyncedFile) Descriptor() ([]byte, []int) {
+	return file_api_proto_insync_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *SyncedFile) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *SyncedFile) GetMode() SyncMode {
+	if x != nil {
+		return x.Mode
+	}
+	return SyncMode_BASE_SYNC
+}
+
+func (x *SyncedFile) GetLocalPath() string {
+	if x != nil {
+		return x.LocalPath
+	}
+	return ""
+}
+
+type ListSyncedFilesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AccountId     string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListSyncedFilesRequest) Reset() {
+	*x = ListSyncedFilesRequest{}
+	mi := &file_api_proto_insync_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListSyncedFilesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListSyncedFilesRequest) ProtoMessage() {}
+
+func (x *ListSyncedFilesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_insync_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListSyncedFilesRequest.ProtoReflect.Descriptor instead.
+func (*ListSyncedFilesRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_insync_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *ListSyncedFilesRequest) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+type ListSyncedFilesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Files         []*SyncedFile          `protobuf:"bytes,1,rep,name=files,proto3" json:"files,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListSyncedFilesResponse) Reset() {
+	*x = ListSyncedFilesResponse{}
+	mi := &file_api_proto_insync_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListSyncedFilesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListSyncedFilesResponse) ProtoMessage() {}
+
+func (x *ListSyncedFilesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_insync_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListSyncedFilesResponse.ProtoReflect.Descriptor instead.
+func (*ListSyncedFilesResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_insync_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *ListSyncedFilesResponse) GetFiles() []*SyncedFile {
+	if x != nil {
+		return x.Files
+	}
+	return nil
+}
+
 var File_api_proto_insync_proto protoreflect.FileDescriptor
 
 const file_api_proto_insync_proto_rawDesc = "" +
@@ -751,14 +915,16 @@ const file_api_proto_insync_proto_rawDesc = "" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x02 \x01(\tR\taccountId\x12#\n" +
-	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\"\xa4\x01\n" +
+	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\"\xea\x01\n" +
 	"\x14ConfigureSyncRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x1d\n" +
 	"\n" +
 	"local_path\x18\x02 \x01(\tR\tlocalPath\x12(\n" +
 	"\x10remote_folder_id\x18\x03 \x01(\tR\x0eremoteFolderId\x12$\n" +
-	"\x04mode\x18\x04 \x01(\x0e2\x10.insync.SyncModeR\x04mode\"V\n" +
+	"\x04mode\x18\x04 \x01(\x0e2\x10.insync.SyncModeR\x04mode\x12!\n" +
+	"\fis_directory\x18\x05 \x01(\bR\visDirectory\x12!\n" +
+	"\fdisplay_name\x18\x06 \x01(\tR\vdisplayName\"V\n" +
 	"\x15ConfigureSyncResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\"\x13\n" +
@@ -784,13 +950,24 @@ const file_api_proto_insync_proto_rawDesc = "" +
 	"\rlast_modified\x18\x05 \x01(\tR\flastModified\x12\x12\n" +
 	"\x04etag\x18\x06 \x01(\tR\x04etag\";\n" +
 	"\x11ListFilesResponse\x12&\n" +
-	"\x05files\x18\x01 \x03(\v2\x10.insync.FileInfoR\x05files*(\n" +
+	"\x05files\x18\x01 \x03(\v2\x10.insync.FileInfoR\x05files\"e\n" +
+	"\n" +
+	"SyncedFile\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12$\n" +
+	"\x04mode\x18\x02 \x01(\x0e2\x10.insync.SyncModeR\x04mode\x12\x1d\n" +
+	"\n" +
+	"local_path\x18\x03 \x01(\tR\tlocalPath\"7\n" +
+	"\x16ListSyncedFilesRequest\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\"C\n" +
+	"\x17ListSyncedFilesResponse\x12(\n" +
+	"\x05files\x18\x01 \x03(\v2\x12.insync.SyncedFileR\x05files*(\n" +
 	"\bSyncMode\x12\r\n" +
 	"\tBASE_SYNC\x10\x00\x12\r\n" +
 	"\tFULL_SYNC\x10\x01**\n" +
 	"\bProvider\x12\x10\n" +
 	"\fGOOGLE_DRIVE\x10\x00\x12\f\n" +
-	"\bONEDRIVE\x10\x012\xf3\x02\n" +
+	"\bONEDRIVE\x10\x012\xc7\x03\n" +
 	"\rInsyncService\x12C\n" +
 	"\n" +
 	"GetAuthURL\x12\x19.insync.GetAuthURLRequest\x1a\x1a.insync.GetAuthURLResponse\x12C\n" +
@@ -798,7 +975,8 @@ const file_api_proto_insync_proto_rawDesc = "" +
 	"AddAccount\x12\x19.insync.AddAccountRequest\x1a\x1a.insync.AddAccountResponse\x12L\n" +
 	"\rConfigureSync\x12\x1c.insync.ConfigureSyncRequest\x1a\x1d.insync.ConfigureSyncResponse\x12H\n" +
 	"\rGetSyncStatus\x12\x19.insync.SyncStatusRequest\x1a\x1a.insync.SyncStatusResponse0\x01\x12@\n" +
-	"\tListFiles\x12\x18.insync.ListFilesRequest\x1a\x19.insync.ListFilesResponseB4Z2github.com/thiagohmm/insync-clone/api/proto/insyncb\x06proto3"
+	"\tListFiles\x12\x18.insync.ListFilesRequest\x1a\x19.insync.ListFilesResponse\x12R\n" +
+	"\x0fListSyncedFiles\x12\x1e.insync.ListSyncedFilesRequest\x1a\x1f.insync.ListSyncedFilesResponseB4Z2github.com/thiagohmm/insync-clone/api/proto/insyncb\x06proto3"
 
 var (
 	file_api_proto_insync_proto_rawDescOnce sync.Once
@@ -813,21 +991,24 @@ func file_api_proto_insync_proto_rawDescGZIP() []byte {
 }
 
 var file_api_proto_insync_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_api_proto_insync_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_api_proto_insync_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_api_proto_insync_proto_goTypes = []any{
-	(SyncMode)(0),                 // 0: insync.SyncMode
-	(Provider)(0),                 // 1: insync.Provider
-	(*GetAuthURLRequest)(nil),     // 2: insync.GetAuthURLRequest
-	(*GetAuthURLResponse)(nil),    // 3: insync.GetAuthURLResponse
-	(*AddAccountRequest)(nil),     // 4: insync.AddAccountRequest
-	(*AddAccountResponse)(nil),    // 5: insync.AddAccountResponse
-	(*ConfigureSyncRequest)(nil),  // 6: insync.ConfigureSyncRequest
-	(*ConfigureSyncResponse)(nil), // 7: insync.ConfigureSyncResponse
-	(*SyncStatusRequest)(nil),     // 8: insync.SyncStatusRequest
-	(*SyncStatusResponse)(nil),    // 9: insync.SyncStatusResponse
-	(*ListFilesRequest)(nil),      // 10: insync.ListFilesRequest
-	(*FileInfo)(nil),              // 11: insync.FileInfo
-	(*ListFilesResponse)(nil),     // 12: insync.ListFilesResponse
+	(SyncMode)(0),                   // 0: insync.SyncMode
+	(Provider)(0),                   // 1: insync.Provider
+	(*GetAuthURLRequest)(nil),       // 2: insync.GetAuthURLRequest
+	(*GetAuthURLResponse)(nil),      // 3: insync.GetAuthURLResponse
+	(*AddAccountRequest)(nil),       // 4: insync.AddAccountRequest
+	(*AddAccountResponse)(nil),      // 5: insync.AddAccountResponse
+	(*ConfigureSyncRequest)(nil),    // 6: insync.ConfigureSyncRequest
+	(*ConfigureSyncResponse)(nil),   // 7: insync.ConfigureSyncResponse
+	(*SyncStatusRequest)(nil),       // 8: insync.SyncStatusRequest
+	(*SyncStatusResponse)(nil),      // 9: insync.SyncStatusResponse
+	(*ListFilesRequest)(nil),        // 10: insync.ListFilesRequest
+	(*FileInfo)(nil),                // 11: insync.FileInfo
+	(*ListFilesResponse)(nil),       // 12: insync.ListFilesResponse
+	(*SyncedFile)(nil),              // 13: insync.SyncedFile
+	(*ListSyncedFilesRequest)(nil),  // 14: insync.ListSyncedFilesRequest
+	(*ListSyncedFilesResponse)(nil), // 15: insync.ListSyncedFilesResponse
 }
 var file_api_proto_insync_proto_depIdxs = []int32{
 	1,  // 0: insync.GetAuthURLRequest.provider:type_name -> insync.Provider
@@ -835,21 +1016,25 @@ var file_api_proto_insync_proto_depIdxs = []int32{
 	0,  // 2: insync.ConfigureSyncRequest.mode:type_name -> insync.SyncMode
 	1,  // 3: insync.SyncStatusResponse.provider:type_name -> insync.Provider
 	11, // 4: insync.ListFilesResponse.files:type_name -> insync.FileInfo
-	2,  // 5: insync.InsyncService.GetAuthURL:input_type -> insync.GetAuthURLRequest
-	4,  // 6: insync.InsyncService.AddAccount:input_type -> insync.AddAccountRequest
-	6,  // 7: insync.InsyncService.ConfigureSync:input_type -> insync.ConfigureSyncRequest
-	8,  // 8: insync.InsyncService.GetSyncStatus:input_type -> insync.SyncStatusRequest
-	10, // 9: insync.InsyncService.ListFiles:input_type -> insync.ListFilesRequest
-	3,  // 10: insync.InsyncService.GetAuthURL:output_type -> insync.GetAuthURLResponse
-	5,  // 11: insync.InsyncService.AddAccount:output_type -> insync.AddAccountResponse
-	7,  // 12: insync.InsyncService.ConfigureSync:output_type -> insync.ConfigureSyncResponse
-	9,  // 13: insync.InsyncService.GetSyncStatus:output_type -> insync.SyncStatusResponse
-	12, // 14: insync.InsyncService.ListFiles:output_type -> insync.ListFilesResponse
-	10, // [10:15] is the sub-list for method output_type
-	5,  // [5:10] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	0,  // 5: insync.SyncedFile.mode:type_name -> insync.SyncMode
+	13, // 6: insync.ListSyncedFilesResponse.files:type_name -> insync.SyncedFile
+	2,  // 7: insync.InsyncService.GetAuthURL:input_type -> insync.GetAuthURLRequest
+	4,  // 8: insync.InsyncService.AddAccount:input_type -> insync.AddAccountRequest
+	6,  // 9: insync.InsyncService.ConfigureSync:input_type -> insync.ConfigureSyncRequest
+	8,  // 10: insync.InsyncService.GetSyncStatus:input_type -> insync.SyncStatusRequest
+	10, // 11: insync.InsyncService.ListFiles:input_type -> insync.ListFilesRequest
+	14, // 12: insync.InsyncService.ListSyncedFiles:input_type -> insync.ListSyncedFilesRequest
+	3,  // 13: insync.InsyncService.GetAuthURL:output_type -> insync.GetAuthURLResponse
+	5,  // 14: insync.InsyncService.AddAccount:output_type -> insync.AddAccountResponse
+	7,  // 15: insync.InsyncService.ConfigureSync:output_type -> insync.ConfigureSyncResponse
+	9,  // 16: insync.InsyncService.GetSyncStatus:output_type -> insync.SyncStatusResponse
+	12, // 17: insync.InsyncService.ListFiles:output_type -> insync.ListFilesResponse
+	15, // 18: insync.InsyncService.ListSyncedFiles:output_type -> insync.ListSyncedFilesResponse
+	13, // [13:19] is the sub-list for method output_type
+	7,  // [7:13] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_insync_proto_init() }
@@ -863,7 +1048,7 @@ func file_api_proto_insync_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_insync_proto_rawDesc), len(file_api_proto_insync_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   11,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

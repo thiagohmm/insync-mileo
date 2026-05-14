@@ -52,10 +52,10 @@ func main() {
 		log.Fatalf("failed to initialize watcher: %v", err)
 	}
 	defer watcher.Close()
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	watcher.Start(ctx)
 
 	// Initialize Remote Poller (every 5 minutes)
@@ -74,7 +74,7 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
-	
+
 	log.Println("Shutting down...")
 	s.GracefulStop()
 }

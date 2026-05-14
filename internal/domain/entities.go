@@ -31,6 +31,7 @@ type SyncConfig struct {
 	RemoteFolderID string
 	Mode           SyncMode
 	Provider       Provider
+	IsDirectory    bool
 }
 
 type FileMetadata struct {

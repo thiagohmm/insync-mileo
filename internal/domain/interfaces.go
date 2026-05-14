@@ -29,4 +29,5 @@ type CloudService interface {
 type SyncUseCase interface {
 	SyncAll(ctx context.Context) error
 	SyncFolder(ctx context.Context, config SyncConfig) error
+	Statuses() <-chan SyncStatus
 }

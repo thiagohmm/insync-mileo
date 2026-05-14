@@ -10,11 +10,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/pkg/browser"
@@ -40,9 +42,24 @@ type browseItem struct {
 	remoteID    string
 	isDirectory bool
 	isBack      bool
+	mode        insync.SyncMode
+	hasMode     bool
 }
 
-func (i browseItem) Title() string       { return i.title }
+func (i browseItem) Title() string {
+	if i.isBack {
+		return i.title
+	}
+	marker := "[]"
+	if i.hasMode {
+		if i.mode == insync.SyncMode_FULL_SYNC {
+			marker = "[F]"
+		} else {
+			marker = "[B]"
+		}
+	}
+	return marker + " " + i.title
+}
 func (i browseItem) Description() string { return i.desc }
 func (i browseItem) FilterValue() string { return i.title }
 
@@ -52,8 +69,21 @@ type fileListMsg struct {
 	files []*insync.FileInfo
 }
 
+type syncedListMsg struct {
+	modes      map[string]insync.SyncMode
+	localRoot  string
+	configured bool
+	count      int
+}
+
 type listErrMsg struct {
 	text string
+}
+
+type syncStartedMsg struct {
+	modes map[string]insync.SyncMode
+	count int
+	errs  []string
 }
 
 // pollAuthMsg dispara checagem periódica AddAccount(código vazio) após abrir o OAuth no navegador.
@@ -65,20 +95,25 @@ const (
 	stateProviders state = iota
 	stateAuthCode
 	stateBrowsing
+	stateLocalPath
 )
 
 type model struct {
-	list       list.Model
-	progress   progress.Model
-	status     string
-	client     insync.InsyncServiceClient
-	ctx        context.Context
-	cancel     context.CancelFunc
-	state      state
-	accountID  string
-	provider   insync.Provider
-	authCode   string
-	browsePath []string // do root ao diretório atual, ex.: {"root", "abc..."}
+	list          list.Model
+	progress      progress.Model
+	pathInput     textinput.Model
+	status        string
+	client        insync.InsyncServiceClient
+	ctx           context.Context
+	cancel        context.CancelFunc
+	state         state
+	accountID     string
+	provider      insync.Provider
+	authCode      string
+	browsePath    []string // do root ao diretório atual, ex.: {"root", "abc..."}
+	syncedModes   map[string]insync.SyncMode
+	selectedItems map[string]browseItem
+	lastLocalRoot string
 }
 
 func providerItems() []list.Item {
@@ -89,12 +124,20 @@ func providerItems() []list.Item {
 }
 
 func initialModel(client insync.InsyncServiceClient) model {
+	ti := textinput.New()
+	ti.Placeholder = defaultSyncRoot()
+	ti.Prompt = "Caminho local: "
+	ti.CharLimit = 512
+	ti.Width = 80
 	m := model{
-		list:     list.New(providerItems(), list.NewDefaultDelegate(), 0, 0),
-		progress: progress.New(progress.WithDefaultGradient()),
-		status:   "Conectado ao Daemon",
-		client:   client,
-		state:    stateProviders,
+		list:          list.New(providerItems(), list.NewDefaultDelegate(), 0, 0),
+		progress:      progress.New(progress.WithDefaultGradient()),
+		pathInput:     ti,
+		status:        "Conectado ao Daemon",
+		client:        client,
+		state:         stateProviders,
+		syncedModes:   make(map[string]insync.SyncMode),
+		selectedItems: make(map[string]browseItem),
 	}
 	m.list.Title = "Insync Clone - Provedores"
 	m.list.SetFilteringEnabled(false)
@@ -118,9 +161,9 @@ func pollAuthTick() tea.Cmd {
 func (m model) afterAuthSuccess() (model, tea.Cmd) {
 	m.state = stateBrowsing
 	m.browsePath = []string{"root"}
-	m.list.Title = "Google Drive — b: base-sync | s: full-sync"
+	m.list.Title = "Google Drive — b: base-sync | f: full-sync"
 	m.status = "Autenticado! Carregando lista da nuvem..."
-	return m, tea.Batch(m.fetchFiles("root"), m.waitForStatus())
+	return m, tea.Batch(m.fetchFiles("root"), m.fetchSynced(), m.waitForStatus())
 }
 
 func (m model) waitForStatus() tea.Cmd {
@@ -150,54 +193,134 @@ func (m model) fetchFiles(folderID string) tea.Cmd {
 	}
 }
 
-func (m model) configureSyncForSelection(mode insync.SyncMode) (model, tea.Cmd) {
+func (m model) fetchSynced() tea.Cmd {
+	return func() tea.Msg {
+		res, err := m.client.ListSyncedFiles(m.ctx, &insync.ListSyncedFilesRequest{
+			AccountId: m.accountID,
+		})
+		if err != nil {
+			return listErrMsg{text: err.Error()}
+		}
+		modes := make(map[string]insync.SyncMode, len(res.Files))
+		localRoot := ""
+		for _, f := range res.Files {
+			modes[f.Path] = f.Mode
+			if localRoot == "" && f.LocalPath != "" {
+				candidate := filepath.Dir(f.LocalPath)
+				if candidate != "." {
+					localRoot = candidate
+				}
+			}
+		}
+		return syncedListMsg{modes: modes, localRoot: localRoot}
+	}
+}
+
+func (m model) toggleSyncForSelection(mode insync.SyncMode) (model, tea.Cmd) {
 	sel, ok := m.list.SelectedItem().(browseItem)
 	if !ok || sel.isBack {
 		return m, nil
 	}
-	if !sel.isDirectory {
-		m.status = "Escolha uma pasta para sincronizar (não um arquivo)."
-		return m, nil
+	sel.mode = mode
+	sel.hasMode = true
+	m.selectedItems[sel.remoteID] = sel
+	m.syncedModes[sel.remoteID] = mode
+	m.refreshVisibleMarkers()
+	if m.lastLocalRoot != "" {
+		if err := os.MkdirAll(m.lastLocalRoot, 0755); err != nil {
+			m.status = "Erro ao criar caminho local: " + err.Error()
+			return m, nil
+		}
+		m.status = fmt.Sprintf("Enviando %d item(ns) ao servidor...", len(m.selectedItems))
+		return m, m.configureSelectedItems(m.lastLocalRoot)
 	}
-	suffix := safeLocalDir(sel.title)
-	var local string
-	if mode == insync.SyncMode_BASE_SYNC {
-		local = "./sync-base-" + suffix
-	} else {
-		local = "./sync-full-" + suffix
-	}
-	modeLabel := "base-sync"
-	if mode == insync.SyncMode_FULL_SYNC {
-		modeLabel = "full-sync"
-	}
-	_, err := m.client.ConfigureSync(m.ctx, &insync.ConfigureSyncRequest{
-		AccountId:      m.accountID,
-		LocalPath:      local,
-		RemoteFolderId: sel.remoteID,
-		Mode:           mode,
-	})
-	if err != nil {
-		m.status = "Erro ao configurar sync: " + err.Error()
-	} else {
-		m.status = fmt.Sprintf("Sync (%s): nuvem → %s — Base: apagar local não remove na nuvem; apagar na nuvem remove aqui. Full: espelha tudo.", modeLabel, local)
-	}
+	m.status = fmt.Sprintf("%d item(ns) selecionado(s). Pressione p para escolher o caminho local.", len(m.selectedItems))
 	return m, nil
 }
 
-func safeLocalDir(name string) string {
-	var b strings.Builder
-	for _, r := range name {
-		if r == '/' || r == '\\' || r == ':' || r < 32 {
-			b.WriteByte('_')
-		} else {
-			b.WriteRune(r)
+func (m *model) refreshVisibleMarkers() {
+	items := m.list.Items()
+	next := make([]list.Item, 0, len(items))
+	for _, it := range items {
+		bi, ok := it.(browseItem)
+		if !ok || bi.isBack {
+			next = append(next, it)
+			continue
 		}
+		if mode, ok := m.selectedItems[bi.remoteID]; ok {
+			bi.mode = mode.mode
+			bi.hasMode = true
+		} else if mode, ok := m.syncedModes[bi.remoteID]; ok {
+			bi.mode = mode
+			bi.hasMode = true
+		} else {
+			bi.hasMode = false
+		}
+		next = append(next, bi)
 	}
-	s := strings.TrimSpace(b.String())
-	if s == "" {
-		return "sync-folder"
+	m.list.SetItems(next)
+}
+
+func (m model) configureSelectedItems(localRoot string) tea.Cmd {
+	items := make([]browseItem, 0, len(m.selectedItems))
+	for _, item := range m.selectedItems {
+		items = append(items, item)
+	}
+	return func() tea.Msg {
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		errs := make([]string, 0)
+		modes := make(map[string]insync.SyncMode, len(items))
+
+		for idx, item := range items {
+			idx := idx
+			item := item
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				localPath := filepath.Join(localRoot, safeLocalName(item.title))
+				ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
+				res, err := m.client.ConfigureSync(ctx, &insync.ConfigureSyncRequest{
+					AccountId:      m.accountID,
+					LocalPath:      localPath,
+					RemoteFolderId: item.remoteID,
+					Mode:           item.mode,
+					IsDirectory:    item.isDirectory,
+					DisplayName:    item.title,
+				})
+				cancel()
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					errs = append(errs, fmt.Sprintf("configurar %s (%d/%d): %v", item.title, idx+1, len(items), err))
+					return
+				}
+				if !res.Success {
+					errs = append(errs, fmt.Sprintf("configurar %s (%d/%d): %s", item.title, idx+1, len(items), res.ErrorMessage))
+					return
+				}
+				modes[item.remoteID] = item.mode
+			}()
+		}
+		wg.Wait()
+		return syncStartedMsg{modes: modes, count: len(modes), errs: errs}
+	}
+}
+
+func safeLocalName(name string) string {
+	replacer := strings.NewReplacer("/", "_", "\\", "_", ":", "_")
+	s := strings.TrimSpace(replacer.Replace(name))
+	if s == "" || s == "." || s == ".." {
+		return "sync-item"
 	}
 	return s
+}
+
+func defaultSyncRoot() string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, "Insync")
+	}
+	return "./Insync"
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -208,9 +331,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancel()
 			return m, tea.Quit
 		}
+		if m.state == stateLocalPath {
+			switch key {
+			case "enter":
+				localRoot := strings.TrimSpace(m.pathInput.Value())
+				if localRoot == "" {
+					localRoot = defaultSyncRoot()
+				}
+				if err := os.MkdirAll(localRoot, 0755); err != nil {
+					m.status = "Erro ao criar caminho local: " + err.Error()
+					return m, nil
+				}
+				m.lastLocalRoot = localRoot
+				m.state = stateBrowsing
+				m.status = fmt.Sprintf("Enviando %d item(ns) ao servidor...", len(m.selectedItems))
+				return m, m.configureSelectedItems(localRoot)
+			case "esc":
+				m.state = stateBrowsing
+				m.status = "Seleção mantida. Pressione p quando quiser escolher o caminho local."
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.pathInput, cmd = m.pathInput.Update(msg)
+			return m, cmd
+		}
 		// Em browsing, a lista precisa receber ↑/↓/j/k/pgup/etc. antes de qualquer outra lógica.
 		// Ex.: msg.String() nem sempre cobre todos os casos; passar ao componente bubbles resolve o foco.
-		if m.state == stateBrowsing && key != "backspace" && key != "enter" && key != "s" && key != "b" {
+		if m.state == stateBrowsing && key != "backspace" && key != "enter" && key != "f" && key != "b" && key != "p" {
 			var cmd tea.Cmd
 			m.list, cmd = m.list.Update(msg)
 			return m, cmd
@@ -228,11 +375,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "b":
 			if m.state == stateBrowsing {
-				return m.configureSyncForSelection(insync.SyncMode_BASE_SYNC)
+				return m.toggleSyncForSelection(insync.SyncMode_BASE_SYNC)
 			}
-		case "s":
+		case "f":
 			if m.state == stateBrowsing {
-				return m.configureSyncForSelection(insync.SyncMode_FULL_SYNC)
+				return m.toggleSyncForSelection(insync.SyncMode_FULL_SYNC)
+			}
+		case "p":
+			if m.state == stateBrowsing {
+				if len(m.selectedItems) == 0 {
+					m.status = "Selecione ao menos um arquivo ou pasta com b ou f."
+					return m, nil
+				}
+				m.state = stateLocalPath
+				if m.lastLocalRoot != "" {
+					m.pathInput.SetValue(m.lastLocalRoot)
+				} else {
+					m.pathInput.SetValue(defaultSyncRoot())
+				}
+				m.pathInput.Focus()
+				m.status = "Informe a pasta onde os itens selecionados serão sincronizados."
+				return m, textinput.Blink
 			}
 		case "enter":
 			if m.state == stateProviders {
@@ -283,7 +446,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.status = "Carregando..."
 					return m, m.fetchFiles(sel.remoteID)
 				}
-				m.status = "É um arquivo — escolha uma pasta e use b ou s."
+				m.status = "Arquivo selecionável com b ou f. Pressione p para escolher o destino local."
 			}
 		default:
 			if m.state == stateAuthCode && len(key) == 1 {
@@ -299,14 +462,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, f := range msg.files {
 			desc := "Arquivo"
 			if f.IsDirectory {
-				desc = "Pasta — Enter abrir | b base-sync | s full-sync"
+				desc = "Pasta — Enter abrir | b base-sync | f full-sync"
+			} else {
+				desc = "Arquivo — b base-sync | f full-sync"
 			}
-			items = append(items, browseItem{
+			bi := browseItem{
 				title:       f.Name,
 				desc:        desc,
 				remoteID:    f.Path,
 				isDirectory: f.IsDirectory,
-			})
+			}
+			if selected, ok := m.selectedItems[f.Path]; ok {
+				bi.mode = selected.mode
+				bi.hasMode = true
+			} else if mode, ok := m.syncedModes[f.Path]; ok {
+				bi.mode = mode
+				bi.hasMode = true
+			}
+			items = append(items, bi)
 		}
 		m.list.SetItems(items)
 		m.list.ResetSelected()
@@ -314,8 +487,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.browsePath) > 0 {
 			cur = m.browsePath[len(m.browsePath)-1]
 		}
-		m.status = fmt.Sprintf("Pasta: %s — ↑↓/jk mover | Enter abrir | b base-sync | s full-sync | .. voltar", cur)
+		m.status = fmt.Sprintf("Pasta: %s — ↑↓/jk mover | Enter abrir pasta | b base-sync | f full-sync | p caminho local", cur)
 		return m, nil
+	case syncedListMsg:
+		if msg.modes != nil {
+			m.syncedModes = msg.modes
+		}
+		if msg.localRoot != "" {
+			m.lastLocalRoot = msg.localRoot
+		}
+		if msg.configured {
+			for id, item := range m.selectedItems {
+				m.syncedModes[id] = item.mode
+			}
+			m.selectedItems = make(map[string]browseItem)
+		}
+		m.refreshVisibleMarkers()
+		if msg.configured {
+			m.status = fmt.Sprintf("%d item(ns) configurado(s). O servidor iniciou o sync em background.", msg.count)
+		}
+		return m, nil
+	case syncStartedMsg:
+		for id, mode := range msg.modes {
+			m.syncedModes[id] = mode
+			delete(m.selectedItems, id)
+		}
+		m.refreshVisibleMarkers()
+		if len(msg.errs) > 0 {
+			m.status = fmt.Sprintf("%d item(ns) iniciado(s), %d erro(s): %s", msg.count, len(msg.errs), strings.Join(msg.errs, " | "))
+		} else {
+			m.status = fmt.Sprintf("%d item(ns) configurado(s). O servidor iniciou o sync em background.", msg.count)
+		}
+		return m, m.waitForStatus()
 	case pollAuthMsg:
 		if m.state != stateAuthCode {
 			return m, nil
@@ -330,16 +533,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, pollAuthTick()
 	case listErrMsg:
-		m.status = "Erro ao listar: " + msg.text
+		m.status = "Erro: " + msg.text
 		return m, nil
 	case tea.WindowSizeMsg:
 		h, v := docStyle.GetFrameSize()
 		m.list.SetSize(msg.Width-h, msg.Height-v-5)
 	case statusMsg:
-		if m.state != stateBrowsing {
-			return m, nil
-		}
-		m.status = fmt.Sprintf("Syncing: %s", msg.FilePath)
+		m.status = fmt.Sprintf("%s: %s", msg.Status, msg.FilePath)
 		cmd := m.progress.SetPercent(float64(msg.ProgressPercentage) / 100.0)
 		return m, tea.Batch(cmd, m.waitForStatus())
 	case progress.FrameMsg:
@@ -359,12 +559,14 @@ func (m model) View() string {
 	var s string
 	if m.state == stateAuthCode {
 		s = docStyle.Render(fmt.Sprintf("Autenticação %s\n\n%s\n\nCódigo: %s", m.provider, m.status, m.authCode))
+	} else if m.state == stateLocalPath {
+		s = docStyle.Render(fmt.Sprintf("%s\n\n%s", m.status, m.pathInput.View()))
 	} else {
 		s = docStyle.Render(m.list.View())
 		s += "\n\n" + m.status + "\n"
 	}
 	s += "\n" + m.progress.View() + "\n\n"
-	s += "ctrl+c sair | backspace provedores | b base-sync | s full-sync\n"
+	s += "ctrl+c sair | backspace provedores | b base-sync | f full-sync | p caminho\n"
 	return s
 }
 
