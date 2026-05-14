@@ -45,6 +45,12 @@ func (o *oneDriveService) DownloadFile(ctx context.Context, remoteFileID string,
 	return nil
 }
 
+func (o *oneDriveService) DownloadFileWithProgress(ctx context.Context, remoteFileID string, localPath string, onProgress func(downloaded, total int64)) error {
+	// GET /me/drive/items/{remoteFileID}/content
+	// For now, just call DownloadFile since we don't have a real implementation
+	return nil
+}
+
 func (o *oneDriveService) DeleteFile(ctx context.Context, remoteFileID string) error {
 	// DELETE /me/drive/items/{remoteFileID}
 	return nil

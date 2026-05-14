@@ -392,6 +392,7 @@ func (s *Server) downloadGoogleDriveFile(ctx context.Context, driveSvc *drive.Se
 		return err
 	}
 	s.sendProtoStatus(localPath, "Downloading", 0, meta.Size, config.Provider)
+	
 	var body io.ReadCloser
 	if strings.HasPrefix(meta.MimeType, "application/vnd.google-apps.") {
 		exportMime := googleExportMime(meta.MimeType)
@@ -409,12 +410,28 @@ func (s *Server) downloadGoogleDriveFile(ctx context.Context, driveSvc *drive.Se
 		body = res.Body
 	}
 	defer body.Close()
+	
 	out, err := os.Create(localPath)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
-	if _, err := io.Copy(out, body); err != nil {
+	
+	// Track download progress
+	totalSize := meta.Size
+	
+	wrapped := &progressReader{
+		reader: body,
+		total:  totalSize,
+		onProgress: func(d, _ int64) {
+			if totalSize > 0 {
+				progress := int32(float64(d) / float64(totalSize) * 100)
+				s.sendProtoStatus(localPath, "Downloading", progress, totalSize, config.Provider)
+			}
+		},
+	}
+	
+	if _, err := io.Copy(out, wrapped); err != nil {
 		return err
 	}
 	rel := filepath.Base(localPath)
@@ -483,4 +500,23 @@ func (s *Server) sendProtoStatus(path string, statusText string, progress int32,
 	case s.statusCh <- msg:
 	default:
 	}
+}
+
+// progressReader wraps an io.Reader to report progress
+type progressReader struct {
+	reader     io.Reader
+	total      int64
+	downloaded int64
+	onProgress func(downloaded, total int64)
+}
+
+func (p *progressReader) Read(buf []byte) (int, error) {
+	n, err := p.reader.Read(buf)
+	if n > 0 {
+		p.downloaded += int64(n)
+		if p.total > 0 && p.onProgress != nil {
+			p.onProgress(p.downloaded, p.total)
+		}
+	}
+	return n, err
 }

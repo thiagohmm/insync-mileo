@@ -23,6 +23,7 @@ type CloudService interface {
 	ListFiles(ctx context.Context, folderID string) ([]FileMetadata, error)
 	UploadFile(ctx context.Context, localPath string, remoteFolderID string) (string, error)
 	DownloadFile(ctx context.Context, remoteFileID string, localPath string) error
+	DownloadFileWithProgress(ctx context.Context, remoteFileID string, localPath string, onProgress func(downloaded, total int64)) error
 	DeleteFile(ctx context.Context, remoteFileID string) error
 }
 

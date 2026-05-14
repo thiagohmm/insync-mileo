@@ -92,6 +92,61 @@ func (g *googleDriveService) DownloadFile(ctx context.Context, remoteFileID stri
 	return err
 }
 
+func (g *googleDriveService) DownloadFileWithProgress(ctx context.Context, remoteFileID string, localPath string, onProgress func(downloaded, total int64)) error {
+	res, err := g.service.Files.Get(remoteFileID).Download()
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+
+	// Get total size from response headers or metadata
+	var totalSize int64
+	if res.ContentLength > 0 {
+		totalSize = res.ContentLength
+	} else {
+		// Fallback: fetch metadata to get size
+		meta, err := g.service.Files.Get(remoteFileID).Fields("size").Do()
+		if err == nil && meta.Size > 0 {
+			totalSize = meta.Size
+		}
+	}
+
+	out, err := os.Create(localPath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	// Wrap the reader with progress tracking
+	wrapped := &progressReader{
+		reader:   res.Body,
+		total:    totalSize,
+		onProgress: onProgress,
+	}
+
+	_, err = io.Copy(out, wrapped)
+	return err
+}
+
+// progressReader wraps an io.Reader to report progress
+type progressReader struct {
+	reader     io.Reader
+	total      int64
+	downloaded int64
+	onProgress func(downloaded, total int64)
+}
+
+func (p *progressReader) Read(buf []byte) (int, error) {
+	n, err := p.reader.Read(buf)
+	if n > 0 {
+		p.downloaded += int64(n)
+		if p.total > 0 && p.onProgress != nil {
+			p.onProgress(p.downloaded, p.total)
+		}
+	}
+	return n, err
+}
+
 func (g *googleDriveService) DeleteFile(ctx context.Context, remoteFileID string) error {
 	return g.service.Files.Delete(remoteFileID).Do()
 }

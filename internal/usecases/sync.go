@@ -104,8 +104,7 @@ func (s *syncUseCase) SyncFolder(ctx context.Context, config domain.SyncConfig) 
 				downloadSem <- struct{}{}
 				defer func() { <-downloadSem }()
 
-				s.sendStatus(remote.Path, "Downloading", 0, remote.Size, config.Provider)
-				if err := cloudSvc.DownloadFile(ctx, remote.ETag, localPath); err != nil {
+				if err := s.downloadFileWithProgress(ctx, remote, localPath, config, cloudSvc); err != nil {
 					s.sendStatus(remote.Path, "Error", 0, remote.Size, config.Provider)
 					return
 				}
@@ -294,6 +293,21 @@ func (s *syncUseCase) cloudForConfig(ctx context.Context, config domain.SyncConf
 		return nil, err
 	}
 	return cloud.NewGoogleDriveService(driveSvc), nil
+}
+
+// downloadFileWithProgress downloads a file from the cloud while sending progress updates.
+// Progress is estimated based on bytes downloaded vs total file size.
+func (s *syncUseCase) downloadFileWithProgress(ctx context.Context, remote domain.FileMetadata, localPath string, config domain.SyncConfig, cloudSvc domain.CloudService) error {
+	s.sendStatus(remote.Path, "Downloading", 0, remote.Size, config.Provider)
+
+	err := cloudSvc.DownloadFileWithProgress(ctx, remote.ETag, localPath, func(d, total int64) {
+		if total > 0 {
+			progress := int32(float64(d) / float64(total) * 100)
+			s.sendStatus(remote.Path, "Downloading", progress, total, config.Provider)
+		}
+	})
+
+	return err
 }
 
 func (s *syncUseCase) sendStatus(path, status string, progress int32, size int64, provider domain.Provider) {

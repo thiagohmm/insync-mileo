@@ -539,9 +539,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		h, v := docStyle.GetFrameSize()
 		m.list.SetSize(msg.Width-h, msg.Height-v-5)
 	case statusMsg:
+		// Only update progress when there's actual progress (not 0% initial state or 100% synced)
+		if msg.Status == "Downloading" || msg.Status == "Uploading" {
+			m.status = fmt.Sprintf("%s: %s (%d%%)", msg.Status, msg.FilePath, msg.ProgressPercentage)
+			cmd := m.progress.SetPercent(float64(msg.ProgressPercentage) / 100.0)
+			return m, tea.Batch(cmd, m.waitForStatus())
+		}
 		m.status = fmt.Sprintf("%s: %s", msg.Status, msg.FilePath)
-		cmd := m.progress.SetPercent(float64(msg.ProgressPercentage) / 100.0)
-		return m, tea.Batch(cmd, m.waitForStatus())
+		return m, m.waitForStatus()
 	case progress.FrameMsg:
 		newModel, cmd := m.progress.Update(msg)
 		if pm, ok := newModel.(progress.Model); ok {
@@ -565,8 +570,13 @@ func (m model) View() string {
 		s = docStyle.Render(m.list.View())
 		s += "\n\n" + m.status + "\n"
 	}
-	s += "\n" + m.progress.View() + "\n\n"
-	s += "ctrl+c sair | backspace provedores | b base-sync | f full-sync | p caminho\n"
+	
+	// Only show progress bar when there's actual progress happening
+	if m.status != "" && (strings.Contains(m.status, "Downloading") || strings.Contains(m.status, "Uploading")) {
+		s += "\n" + m.progress.View() + "\n"
+	}
+	
+	s += "\nctrl+c sair | backspace provedores | b base-sync | f full-sync | p caminho\n"
 	return s
 }
 
