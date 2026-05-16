@@ -19,10 +19,25 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/sahilm/fuzzy"
 	"github.com/thiagohmm/insync-clone/api/proto/insync"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+// fuzzyFilter wraps sahilm/fuzzy into the bubbles/list FilterFunc signature.
+func fuzzyFilter(term string, targets []string) []list.Rank {
+	results := fuzzy.Find(term, targets)
+	ranks := make([]list.Rank, 0, len(results))
+	for _, r := range results {
+		rank := list.Rank{
+			Index:          r.Index,
+			MatchedIndexes: r.MatchedIndexes,
+		}
+		ranks = append(ranks, rank)
+	}
+	return ranks
+}
 
 var docStyle = lipgloss.NewStyle().Margin(1, 2)
 
@@ -83,6 +98,7 @@ const (
 	stateAuthCode state = iota
 	stateBrowsing
 	stateLocalPath
+	stateConfirmExit
 )
 
 type model struct {
@@ -100,6 +116,7 @@ type model struct {
 	syncedModes   map[string]insync.SyncMode
 	selectedItems map[string]browseItem
 	lastLocalRoot string
+	confirmText   string // "s" ou "n"
 }
 
 func initialModel(client insync.InsyncServiceClient) model {
@@ -119,8 +136,9 @@ func initialModel(client insync.InsyncServiceClient) model {
 		selectedItems: make(map[string]browseItem),
 	}
 	m.list.Title = "Insync Clone - Google Drive"
-	m.list.SetFilteringEnabled(false)
-	m.list.SetShowFilter(false)
+	m.list.SetFilteringEnabled(true)
+	m.list.SetShowFilter(true)
+	m.list.Filter = fuzzyFilter
 	m.list.DisableQuitKeybindings()
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	
@@ -330,6 +348,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancel()
 			return m, tea.Quit
 		}
+
+		// --- stateLocalPath ---
 		if m.state == stateLocalPath {
 			switch key {
 			case "enter":
@@ -354,33 +374,70 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pathInput, cmd = m.pathInput.Update(msg)
 			return m, cmd
 		}
-		// Em browsing, a lista precisa receber ↑/↓/j/k/pgup/etc. antes de qualquer outra lógica.
-		// Ex.: msg.String() nem sempre cobre todos os casos; passar ao componente bubbles resolve o foco.
-		if m.state == stateBrowsing && key != "backspace" && key != "enter" && key != "f" && key != "b" && key != "p" {
-			var cmd tea.Cmd
-			m.list, cmd = m.list.Update(msg)
-			return m, cmd
+
+		// --- stateConfirmExit (caixa de confirmação) ---
+		if m.state == stateConfirmExit {
+			switch key {
+			case "esc":
+				m.state = stateBrowsing
+				m.confirmText = ""
+				m.status = "Sessão mantida."
+				return m, nil
+			case "enter":
+				if strings.ToLower(m.confirmText) == "s" {
+					m.state = stateAuthCode
+					m.authCode = ""
+					m.browsePath = nil
+					m.list.ResetSelected()
+					m.list.ResetFilter()
+					m.confirmText = ""
+					return m, nil
+				}
+				// "n" ou qualquer outra coisa → volta para browsing
+				m.state = stateBrowsing
+				m.confirmText = ""
+				m.status = "Sessão mantida."
+				return m, nil
+			case "backspace":
+				if len(m.confirmText) > 0 {
+					m.confirmText = m.confirmText[:len(m.confirmText)-1]
+				}
+				return m, nil
+			default:
+				if len(key) == 1 {
+					m.confirmText += key
+					m.status = fmt.Sprintf("Sair da sessão? (%s) s/n", m.confirmText)
+					return m, nil
+				}
+			}
+			return m, nil
 		}
 
-		switch key {
-		case "backspace":
-			if m.state == stateBrowsing || m.state == stateAuthCode {
-				m.state = stateAuthCode
-				m.authCode = ""
-				m.browsePath = nil
-				m.list.ResetSelected()
+		// --- stateBrowsing ---
+		if m.state == stateBrowsing {
+			// Teclas que não são capturadas como ação → passam para a lista
+			if key != "enter" && key != "f" && key != "b" && key != "p" && key != "esc" {
+				var cmd tea.Cmd
+				m.list, cmd = m.list.Update(msg)
+
+				return m, cmd
+			}
+
+			// Esc quando NÃO filtrando → abre confirmação de saída
+			if key == "esc" && !m.list.IsFiltered() {
+				m.state = stateConfirmExit
+				m.confirmText = ""
+				m.status = "Sair da sessão? (s/n)"
 				return m, nil
 			}
-		case "b":
-			if m.state == stateBrowsing {
+
+			// Teclas de ação em stateBrowsing
+			switch key {
+			case "b":
 				return m.toggleSyncForSelection(insync.SyncMode_BASE_SYNC)
-			}
-		case "f":
-			if m.state == stateBrowsing {
+			case "f":
 				return m.toggleSyncForSelection(insync.SyncMode_FULL_SYNC)
-			}
-		case "p":
-			if m.state == stateBrowsing {
+			case "p":
 				if len(m.selectedItems) == 0 {
 					m.status = "Selecione ao menos um arquivo ou pasta com b ou f."
 					return m, nil
@@ -394,18 +451,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pathInput.Focus()
 				m.status = "Informe a pasta onde os itens selecionados serão sincronizados."
 				return m, textinput.Blink
-			}
-		case "enter":
-			if m.state == stateAuthCode {
-				res, err := m.client.AddAccount(m.ctx, &insync.AddAccountRequest{
-					AuthCode: m.authCode,
-				})
-				if err == nil && res.Success {
-					m.accountID = res.AccountId
-					return m.afterAuthSuccess()
-				}
-				m.status = "Erro na autenticação. Verifique o código ou tente de novo no navegador."
-			} else if m.state == stateBrowsing {
+			case "enter":
 				sel, ok := m.list.SelectedItem().(browseItem)
 				if !ok {
 					return m, nil
@@ -426,12 +472,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.status = "Arquivo selecionável com b ou f. Pressione p para escolher o destino local."
 			}
-		default:
-			if m.state == stateAuthCode && len(key) == 1 {
-				m.authCode += key
-				return m, nil
-			}
+			return m, nil
 		}
+
+		// --- stateAuthCode ---
+		if m.state == stateAuthCode {
+			if key == "enter" {
+				res, err := m.client.AddAccount(m.ctx, &insync.AddAccountRequest{
+					AuthCode: m.authCode,
+				})
+				if err == nil && res.Success {
+					m.accountID = res.AccountId
+					return m.afterAuthSuccess()
+				}
+				m.status = "Erro na autenticação. Verifique o código ou tente de novo no navegador."
+			} else if len(key) == 1 {
+				m.authCode += key
+			}
+			return m, nil
+		}
+
 	case fileListMsg:
 		var items []list.Item
 		if len(m.browsePath) > 1 {
@@ -465,7 +525,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.browsePath) > 0 {
 			cur = m.browsePath[len(m.browsePath)-1]
 		}
-		m.status = fmt.Sprintf("Pasta: %s — ↑↓/jk mover | Enter abrir pasta | b base-sync | f full-sync | p caminho local", cur)
+		m.status = fmt.Sprintf("Pasta: %s — /↑↓/jk mover | Enter abrir pasta | b base-sync | f full-sync | p caminho", cur)
 		return m, nil
 	case syncedListMsg:
 		if msg.modes != nil {
@@ -539,6 +599,9 @@ func (m model) View() string {
 		s = docStyle.Render(fmt.Sprintf("Google Drive\n\n%s\n\nCódigo: %s", m.status, m.authCode))
 	} else if m.state == stateLocalPath {
 		s = docStyle.Render(fmt.Sprintf("%s\n\n%s", m.status, m.pathInput.View()))
+	} else if m.state == stateConfirmExit {
+		s = docStyle.Render(m.list.View())
+		s += "\n\n" + fmt.Sprintf("⚠ %s [%s]", m.status, m.confirmText) + "▌\n"
 	} else {
 		s = docStyle.Render(m.list.View())
 		s += "\n\n" + m.status + "\n"
@@ -549,7 +612,7 @@ func (m model) View() string {
 		s += "\n" + m.progress.View() + "\n"
 	}
 
-	s += "\nctrl+c sair | backspace auth | b base-sync | f full-sync | p caminho\n"
+	s += "\n/ buscar | esc sair (s/n) | b base-sync | f full-sync | p caminho | ctrl+c\n"
 	return s
 }
 
