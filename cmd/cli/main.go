@@ -240,7 +240,13 @@ func (m model) toggleSyncForSelection(mode insync.SyncMode) (model, tea.Cmd) {
 	}
 	sel.mode = mode
 	sel.hasMode = true
-	m.selectedItems[sel.remoteID] = sel
+	// Criar cópia do mapa para evitar aliasing com o modelo original
+	newSelectedItems := make(map[string]browseItem)
+	for k, v := range m.selectedItems {
+		newSelectedItems[k] = v
+	}
+	newSelectedItems[sel.remoteID] = sel
+	m.selectedItems = newSelectedItems
 	m.syncedModes[sel.remoteID] = mode
 	m.refreshVisibleMarkers()
 	if m.lastLocalRoot != "" {
@@ -415,42 +421,38 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// --- stateBrowsing ---
 		if m.state == stateBrowsing {
-			// Teclas que não são capturadas como ação → passam para a lista
-			if key != "enter" && key != "f" && key != "b" && key != "p" && key != "esc" {
-				var cmd tea.Cmd
-				m.list, cmd = m.list.Update(msg)
-
+			// Primeiro, tenta processar a tecla na lista (isso inclui o filter)
+			// O bubbles/list vai tratar teclas de navegação/filter e gerar um cmd
+			var cmd tea.Cmd
+			m.list, cmd = m.list.Update(msg)
+			
+			// Se a lista gerou um cmd, ela processou a tecla (navegação ou filter)
+			if cmd != nil {
 				return m, cmd
 			}
-
-			// Esc quando NÃO filtrando → abre confirmação de saída
-			if key == "esc" && !m.list.IsFiltered() {
-				m.state = stateConfirmExit
-				m.confirmText = ""
-				m.status = "Sair da sessão? (s/n)"
-				return m, nil
-			}
-
-			// Teclas de ação em stateBrowsing
+			
+			// Se a lista não processou, tenta as teclas de ação
 			switch key {
 			case "b":
-				return m.toggleSyncForSelection(insync.SyncMode_BASE_SYNC)
+				model, cmd := m.toggleSyncForSelection(insync.SyncMode_BASE_SYNC)
+				return model, cmd
 			case "f":
-				return m.toggleSyncForSelection(insync.SyncMode_FULL_SYNC)
+				model, cmd := m.toggleSyncForSelection(insync.SyncMode_FULL_SYNC)
+				return model, cmd
 			case "p":
-				if len(m.selectedItems) == 0 {
-					m.status = "Selecione ao menos um arquivo ou pasta com b ou f."
-					return m, nil
-				}
 				m.state = stateLocalPath
 				if m.lastLocalRoot != "" {
 					m.pathInput.SetValue(m.lastLocalRoot)
 				} else {
 					m.pathInput.SetValue(defaultSyncRoot())
 				}
-				m.pathInput.Focus()
+				var cmds []tea.Cmd
+				cmds = append(cmds, m.pathInput.Focus())
 				m.status = "Informe a pasta onde os itens selecionados serão sincronizados."
-				return m, textinput.Blink
+				var cmd tea.Cmd
+				m.pathInput, cmd = m.pathInput.Update(msg)
+				cmds = append(cmds, cmd)
+				return m, tea.Batch(cmds...)
 			case "enter":
 				sel, ok := m.list.SelectedItem().(browseItem)
 				if !ok {
@@ -471,8 +473,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.fetchFiles(sel.remoteID)
 				}
 				m.status = "Arquivo selecionável com b ou f. Pressione p para escolher o destino local."
+				return m, nil
 			}
-			return m, nil
+
+			// Esc quando NÃO filtrando → abre confirmação de saída
+			if key == "esc" && !m.list.IsFiltered() {
+				m.state = stateConfirmExit
+				m.confirmText = ""
+				m.status = "Sair da sessão? (s/n)"
+				return m, nil
+			}
+
+			// Esc quando filtrando → limpa o filter e fecha o field
+			if key == "esc" && m.list.IsFiltered() {
+				m.list.ResetFilter()
+				return m, nil
+			}
 		}
 
 		// --- stateAuthCode ---

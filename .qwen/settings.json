@@ -4,7 +4,8 @@
       "Bash(protoc *)",
       "Bash(go *)",
       "Bash(cp *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(curl *)"
     ]
   },
   "$version": 4
