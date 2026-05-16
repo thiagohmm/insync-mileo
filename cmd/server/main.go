@@ -18,7 +18,6 @@ import (
 	igrpc "github.com/thiagohmm/insync-clone/internal/infrastructure/grpc"
 	"github.com/thiagohmm/insync-clone/internal/infrastructure/worker"
 	"github.com/thiagohmm/insync-clone/internal/usecases"
-	"google.golang.org/grpc"
 )
 
 func main() {
@@ -39,11 +38,15 @@ func main() {
 	syncUC := usecases.NewSyncUseCase(repo, []domain.CloudService{})
 
 	// Initialize gRPC Server
-	lis, err := net.Listen("tcp", ":50051")
+	lis, err := net.Listen("tcp", "127.0.0.1:50051")
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
-	s := grpc.NewServer()
+	authToken, err := igrpc.EnsureAuthToken()
+	if err != nil {
+		log.Fatalf("failed to initialize auth token: %v", err)
+	}
+	s := igrpc.NewAuthenticatedGRPCServer(authToken)
 	insync.RegisterInsyncServiceServer(s, igrpc.NewServer(syncUC, repo))
 
 	// Initialize FS Watcher

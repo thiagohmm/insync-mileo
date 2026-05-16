@@ -1,4 +1,6 @@
 # Binários e artefactos de build
+/cli
+/server
 *.exe
 *.exe~
 *.dll

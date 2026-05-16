@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -19,24 +20,24 @@ type SQLiteRepository struct {
 func (r *SQLiteRepository) retryOnBusy(ctx context.Context, op func() error) error {
 	maxRetries := 5
 	baseDelay := 50 * time.Millisecond
-	
+
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		err := op()
 		if err == nil {
 			return nil
 		}
-		
+
 		// Verificar se é erro de banco ocupado
 		errMsg := err.Error()
 		if !strings.Contains(errMsg, "SQLITE_BUSY") && !strings.Contains(errMsg, "database is locked") {
 			return err // Erro diferente, retornar imediatamente
 		}
-		
+
 		// Última tentativa, retornar o erro
 		if attempt == maxRetries-1 {
 			return fmt.Errorf("database busy after %d retries: %w", maxRetries, err)
 		}
-		
+
 		// Backoff exponencial com jitter
 		delay := baseDelay * time.Duration(1<<uint(attempt))
 		select {
@@ -46,15 +47,31 @@ func (r *SQLiteRepository) retryOnBusy(ctx context.Context, op func() error) err
 			// Continuar para próxima tentativa
 		}
 	}
-	
+
 	return fmt.Errorf("max retries exceeded")
 }
 
 func NewSQLiteRepository(dbPath string) (*SQLiteRepository, error) {
+	if info, err := os.Lstat(dbPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("refusing to use symlinked database path: %s", dbPath)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("failed to inspect database path: %w", err)
+	}
+	dbFile, err := os.OpenFile(dbPath, os.O_RDWR|os.O_CREATE, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create secure database file: %w", err)
+	}
+	if err := dbFile.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close database file: %w", err)
+	}
+
 	// Adicionar parâmetros para melhor concorrência
 	db, err := sql.Open("sqlite", dbPath+"?_busy_timeout=10000&_journal_mode=WAL&_synchronous=NORMAL")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+	if err := os.Chmod(dbPath, 0600); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("failed to secure database permissions: %w", err)
 	}
 
 	// Configurar pool de conexões para evitar contenção
@@ -64,6 +81,9 @@ func NewSQLiteRepository(dbPath string) (*SQLiteRepository, error) {
 	repo := &SQLiteRepository{db: db}
 	if err := repo.createTables(); err != nil {
 		return nil, fmt.Errorf("failed to create tables: %w", err)
+	}
+	if err := os.Chmod(dbPath, 0600); err != nil {
+		return nil, fmt.Errorf("failed to secure database permissions: %w", err)
 	}
 
 	return repo, nil
@@ -157,7 +177,7 @@ func (r *SQLiteRepository) SaveSyncConfig(ctx context.Context, config *domain.Sy
 			mode = excluded.mode,
 			provider = excluded.provider,
 			is_directory = excluded.is_directory`
-	
+
 	// Usar retry para operação de escrita
 	return r.retryOnBusy(ctx, func() error {
 		result, err := r.db.ExecContext(ctx, query, config.AccountID, config.LocalPath, config.RemoteFolderID, int(config.Mode), string(config.Provider), config.IsDirectory)
@@ -226,7 +246,7 @@ func (r *SQLiteRepository) DeleteSyncConfigByRemoteID(ctx context.Context, accou
 	}); err != nil {
 		return err
 	}
-	
+
 	// Depois deletar o sync_config em si
 	query = `DELETE FROM sync_configs WHERE account_id = ? AND remote_folder_id = ?`
 	return r.retryOnBusy(ctx, func() error {

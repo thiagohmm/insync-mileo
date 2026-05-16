@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/thiagohmm/insync-clone/internal/adapters/cloud"
@@ -92,7 +93,10 @@ func (s *syncUseCase) SyncFolder(ctx context.Context, config domain.SyncConfig) 
 			delete(localFiles, remote.Path)
 			continue
 		}
-		localPath := filepath.Join(config.LocalPath, remote.Path)
+		localPath, errPath := safeJoinLocal(config.LocalPath, remote.Path)
+		if errPath != nil {
+			return errPath
+		}
 		metadata, errMeta := s.repo.GetFileMetadata(ctx, config.ID, remote.Path)
 
 		if errMeta != nil || metadata == nil || metadata.ETag != remote.ETag {
@@ -319,4 +323,23 @@ func (s *syncUseCase) sendStatus(path, status string, progress int32, size int64
 	case s.statusChan <- msg:
 	default:
 	}
+}
+
+func safeJoinLocal(base string, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == ".." {
+		return "", fmt.Errorf("nome remoto inválido: %q", name)
+	}
+	if filepath.IsAbs(name) || strings.ContainsAny(name, `/\`) || filepath.Clean(name) != name {
+		return "", fmt.Errorf("nome remoto inseguro: %q", name)
+	}
+	baseAbs, err := filepath.Abs(base)
+	if err != nil {
+		return "", err
+	}
+	joined := filepath.Clean(filepath.Join(baseAbs, name))
+	if joined != baseAbs && !strings.HasPrefix(joined, baseAbs+string(filepath.Separator)) {
+		return "", fmt.Errorf("caminho remoto escapa da raiz local: %q", name)
+	}
+	return joined, nil
 }

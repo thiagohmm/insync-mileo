@@ -2,9 +2,12 @@ package grpc
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +30,8 @@ type Server struct {
 	syncUseCase domain.SyncUseCase
 	repo        domain.Repository
 	statusCh    chan *insync.SyncStatusResponse
+	authMu      sync.Mutex
+	oauthState  string
 }
 
 func NewServer(syncUseCase domain.SyncUseCase, repo domain.Repository) *Server {
@@ -52,16 +57,41 @@ func (s *Server) GetAuthURL(ctx context.Context, req *insync.GetAuthURLRequest) 
 	if clientID == "" {
 		clientID = "1092767661178-2a973gcsj0cip2oknvdkpsl31vugqrp4.apps.googleusercontent.com"
 	}
-	url := fmt.Sprintf("https://accounts.google.com/o/oauth2/auth?client_id=%s&redirect_uri=http://localhost:8080&response_type=code&scope=https://www.googleapis.com/auth/drive&access_type=offline&prompt=consent", clientID)
-	return &insync.GetAuthURLResponse{Url: url}, nil
+	state, err := randomURLToken(32)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "gerar state OAuth: %v", err)
+	}
+	s.authMu.Lock()
+	s.oauthState = state
+	s.authMu.Unlock()
+
+	values := url.Values{}
+	values.Set("client_id", clientID)
+	values.Set("redirect_uri", "http://127.0.0.1:8080")
+	values.Set("response_type", "code")
+	values.Set("scope", "https://www.googleapis.com/auth/drive")
+	values.Set("access_type", "offline")
+	values.Set("prompt", "consent")
+	values.Set("state", state)
+	authURL := "https://accounts.google.com/o/oauth2/auth?" + values.Encode()
+	return &insync.GetAuthURLResponse{Url: authURL}, nil
 }
 
 func (s *Server) startCallbackServer() {
 	mux := http.NewServeMux()
-	server := &http.Server{Addr: ":8080", Handler: mux}
+	server := &http.Server{
+		Addr:              "127.0.0.1:8080",
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
+		state := r.URL.Query().Get("state")
+		if !s.validOAuthState(state) {
+			http.Error(w, "estado OAuth inválido", http.StatusBadRequest)
+			return
+		}
 		if code != "" {
 			fmt.Fprintf(w, "<html><body style='font-family:sans-serif;padding-top:50px;text-align:center;'>")
 			fmt.Fprintf(w, "<h1 style='color:#4CAF50;'>Autenticação Concluída!</h1>")
@@ -80,7 +110,9 @@ func (s *Server) startCallbackServer() {
 		}
 	})
 
-	server.ListenAndServe()
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		fmt.Printf("callback OAuth falhou: %v\n", err)
+	}
 }
 
 func (s *Server) AddAccount(ctx context.Context, req *insync.AddAccountRequest) (*insync.AddAccountResponse, error) {
@@ -100,7 +132,7 @@ func (s *Server) AddAccount(ctx context.Context, req *insync.AddAccountRequest) 
 		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
 		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
 		Endpoint:     google.Endpoint,
-		RedirectURL:  "http://localhost:8080",
+		RedirectURL:  "http://127.0.0.1:8080",
 	}
 
 	token, err := config.Exchange(ctx, req.AuthCode)
@@ -134,20 +166,24 @@ func (s *Server) ConfigureSync(ctx context.Context, req *insync.ConfigureSyncReq
 	}
 
 	isDirectory := req.IsDirectory
+	localPath, err := validatedLocalSyncPath(req.LocalPath)
+	if err != nil {
+		return &insync.ConfigureSyncResponse{Success: false, ErrorMessage: err.Error()}, nil
+	}
 
 	config := &domain.SyncConfig{
 		AccountID:      req.AccountId,
-		LocalPath:      req.LocalPath,
+		LocalPath:      localPath,
 		RemoteFolderID: req.RemoteFolderId,
 		Mode:           domain.SyncMode(req.Mode),
 		Provider:       acc.Provider,
 		IsDirectory:    isDirectory,
 	}
 	if isDirectory {
-		if err := os.MkdirAll(req.LocalPath, 0755); err != nil {
+		if err := secureMkdirAll(localPath, 0755); err != nil {
 			return &insync.ConfigureSyncResponse{Success: false, ErrorMessage: err.Error()}, nil
 		}
-	} else if err := os.MkdirAll(filepath.Dir(req.LocalPath), 0755); err != nil {
+	} else if err := secureMkdirAll(filepath.Dir(localPath), 0755); err != nil {
 		return &insync.ConfigureSyncResponse{Success: false, ErrorMessage: err.Error()}, nil
 	}
 	if err := s.repo.SaveSyncConfig(ctx, config); err != nil {
@@ -211,7 +247,7 @@ func googleOAuthConfig() *oauth2.Config {
 		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
 		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
 		Endpoint:     google.Endpoint,
-		RedirectURL:  "http://localhost:8080",
+		RedirectURL:  "http://127.0.0.1:8080",
 	}
 	if cfg.ClientID == "" {
 		cfg.ClientID = "1092767661178-2a973gcsj0cip2oknvdkpsl31vugqrp4.apps.googleusercontent.com"
@@ -326,16 +362,16 @@ func (s *Server) Unsync(ctx context.Context, req *insync.UnsyncRequest) (*insync
 	if req.AccountId == "" || req.RemoteFolderId == "" {
 		return &insync.UnsyncResponse{Success: false, ErrorMessage: "account_id e remote_folder_id são obrigatórios"}, nil
 	}
-	
+
 	// Remover o sync config do banco de dados
 	err := s.repo.DeleteSyncConfigByRemoteID(ctx, req.AccountId, req.RemoteFolderId)
 	if err != nil {
 		return &insync.UnsyncResponse{Success: false, ErrorMessage: fmt.Sprintf("failed to delete sync config: %v", err)}, nil
 	}
-	
+
 	// Enviar status de sucesso
 	s.sendProtoStatus(req.RemoteFolderId, "Unsynced - removed from local", 100, 0)
-	
+
 	return &insync.UnsyncResponse{Success: true}, nil
 }
 
@@ -386,7 +422,7 @@ func (s *Server) startGoogleDriveInitialSync(ctx context.Context, acc *domain.Ac
 		return
 	}
 	if config.IsDirectory {
-		if err := os.MkdirAll(config.LocalPath, 0755); err != nil {
+		if err := secureMkdirAll(config.LocalPath, 0755); err != nil {
 			s.sendProtoStatus(config.LocalPath, "Error", 0, 0)
 			return
 		}
@@ -395,7 +431,7 @@ func (s *Server) startGoogleDriveInitialSync(ctx context.Context, acc *domain.Ac
 		}
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(config.LocalPath), 0755); err != nil {
+	if err := secureMkdirAll(filepath.Dir(config.LocalPath), 0755); err != nil {
 		s.sendProtoStatus(config.LocalPath, "Error", 0, 0)
 		return
 	}
@@ -406,7 +442,7 @@ func (s *Server) startGoogleDriveInitialSync(ctx context.Context, acc *domain.Ac
 
 func (s *Server) downloadGoogleDriveFolder(ctx context.Context, driveSvc *drive.Service, folderID string, localDir string, config domain.SyncConfig) error {
 	res, err := driveSvc.Files.List().
-		Q(fmt.Sprintf("'%s' in parents and trashed = false", folderID)).
+		Q(driveParentQuery(folderID)).
 		Fields("files(id, name, size, md5Checksum, modifiedTime, mimeType)").
 		Do()
 	if err != nil {
@@ -418,9 +454,12 @@ func (s *Server) downloadGoogleDriveFolder(ctx context.Context, driveSvc *drive.
 
 	for _, f := range res.Files {
 		f := f
-		localPath := filepath.Join(localDir, f.Name)
+		localPath, err := safeJoinLocal(localDir, f.Name)
+		if err != nil {
+			return err
+		}
 		if f.MimeType == "application/vnd.google-apps.folder" {
-			if err := os.MkdirAll(localPath, 0755); err != nil {
+			if err := secureMkdirAll(localPath, 0755); err != nil {
 				return err
 			}
 			wg.Add(1)
@@ -481,7 +520,7 @@ func (s *Server) downloadGoogleDriveFile(ctx context.Context, driveSvc *drive.Se
 	}
 	defer body.Close()
 
-	out, err := os.Create(localPath)
+	out, err := secureCreateLocalFile(localPath)
 	if err != nil {
 		return err
 	}
@@ -551,6 +590,34 @@ func ensureExportExtension(path string, exportMime string) string {
 	default:
 		return path + ".pdf"
 	}
+}
+
+func (s *Server) validOAuthState(state string) bool {
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
+	if state == "" || s.oauthState == "" || state != s.oauthState {
+		return false
+	}
+	s.oauthState = ""
+	return true
+}
+
+func randomURLToken(size int) (string, error) {
+	buf := make([]byte, size)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func driveParentQuery(folderID string) string {
+	return fmt.Sprintf("'%s' in parents and trashed = false", escapeDriveQueryString(folderID))
+}
+
+func escapeDriveQueryString(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `'`, `\'`)
+	return value
 }
 
 func (s *Server) sendProtoStatus(path string, statusText string, progress int32, size int64) {

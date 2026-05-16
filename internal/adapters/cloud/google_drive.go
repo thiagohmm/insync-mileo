@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/thiagohmm/insync-clone/internal/domain"
@@ -24,7 +26,7 @@ func (g *googleDriveService) GetProvider() domain.Provider {
 }
 
 func (g *googleDriveService) ListFiles(ctx context.Context, folderID string) ([]domain.FileMetadata, error) {
-	q := fmt.Sprintf("'%s' in parents and trashed = false", folderID)
+	q := driveParentQuery(folderID)
 	call := g.service.Files.List().Q(q).Fields("files(id, name, size, md5Checksum, modifiedTime, mimeType)")
 	res, err := call.Do()
 	if err != nil {
@@ -82,7 +84,7 @@ func (g *googleDriveService) DownloadFile(ctx context.Context, remoteFileID stri
 	}
 	defer res.Body.Close()
 
-	out, err := os.Create(localPath)
+	out, err := secureCreateLocalFile(localPath)
 	if err != nil {
 		return err
 	}
@@ -111,7 +113,7 @@ func (g *googleDriveService) DownloadFileWithProgress(ctx context.Context, remot
 		}
 	}
 
-	out, err := os.Create(localPath)
+	out, err := secureCreateLocalFile(localPath)
 	if err != nil {
 		return err
 	}
@@ -119,8 +121,8 @@ func (g *googleDriveService) DownloadFileWithProgress(ctx context.Context, remot
 
 	// Wrap the reader with progress tracking
 	wrapped := &progressReader{
-		reader:   res.Body,
-		total:    totalSize,
+		reader:     res.Body,
+		total:      totalSize,
 		onProgress: onProgress,
 	}
 
@@ -149,4 +151,62 @@ func (p *progressReader) Read(buf []byte) (int, error) {
 
 func (g *googleDriveService) DeleteFile(ctx context.Context, remoteFileID string) error {
 	return g.service.Files.Delete(remoteFileID).Do()
+}
+
+func driveParentQuery(folderID string) string {
+	return fmt.Sprintf("'%s' in parents and trashed = false", escapeDriveQueryString(folderID))
+}
+
+func escapeDriveQueryString(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `'`, `\'`)
+	return value
+}
+
+func secureCreateLocalFile(path string) (*os.File, error) {
+	if err := ensurePathHasNoSymlink(path); err != nil {
+		return nil, err
+	}
+	if err := ensurePathHasNoSymlink(filepath.Dir(path)); err != nil {
+		return nil, err
+	}
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("caminho local inseguro: %s é symlink", path)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+}
+
+func ensurePathHasNoSymlink(path string) error {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	clean := filepath.Clean(abs)
+	volume := filepath.VolumeName(clean)
+	rest := strings.TrimPrefix(clean, volume)
+	rest = strings.TrimPrefix(rest, string(filepath.Separator))
+
+	current := volume + string(filepath.Separator)
+	if volume == "" {
+		current = string(filepath.Separator)
+	}
+	for _, part := range strings.Split(rest, string(filepath.Separator)) {
+		if part == "" {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("caminho local inseguro: %s é symlink", current)
+		}
+	}
+	return nil
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/sahilm/fuzzy"
 	"github.com/thiagohmm/insync-clone/api/proto/insync"
+	igrpc "github.com/thiagohmm/insync-clone/internal/infrastructure/grpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -144,14 +145,14 @@ func initialModel(client insync.InsyncServiceClient) model {
 	m.list.SetShowFilter(true)
 	m.list.Filter = fuzzyFilter
 	m.list.DisableQuitKeybindings()
-	
+
 	// Substituir KeyMap para evitar conflito com 'b' e 'f'
 	m.list.KeyMap.PrevPage.SetKeys("left", "h", "pgup")
 	m.list.KeyMap.NextPage.SetKeys("right", "l", "pgdown")
 	m.list.KeyMap.PrevPage.SetHelp("←/h/pgup", "prev page")
 	m.list.KeyMap.NextPage.SetHelp("→/l/pgdn", "next page")
 	m.ctx, m.cancel = context.WithCancel(context.Background())
-	
+
 	// Obter URL de autenticação e abrir navegador automaticamente
 	resp, err := client.GetAuthURL(m.ctx, &insync.GetAuthURLRequest{})
 	if err != nil {
@@ -169,7 +170,7 @@ func initialModel(client insync.InsyncServiceClient) model {
 			}
 		}()
 	}
-	
+
 	return m
 }
 
@@ -192,16 +193,16 @@ func (m model) Init() tea.Cmd {
 func (m model) checkAuthStatus() tea.Cmd {
 	return func() tea.Msg {
 		time.Sleep(2 * time.Second)
-		
+
 		// Tentar verificar se já existe uma conta autenticada
 		res, err := m.client.AddAccount(m.ctx, &insync.AddAccountRequest{
 			AuthCode: "", // Código vazio significa: "verificar se já existe conta"
 		})
-		
+
 		if err == nil && res.Success && res.AccountId != "" {
 			return res // Retorna a resposta com sucesso
 		}
-		
+
 		// Ainda não autenticou, tentar novamente
 		return m.checkAuthStatus()
 	}
@@ -248,14 +249,14 @@ func (m model) toggleSyncForSelection(mode insync.SyncMode) (model, tea.Cmd) {
 	if !ok || sel.isBack {
 		return m, nil
 	}
-	
+
 	// Se o item já está em syncedModes (syncado anteriormente), mover para selectedItems
 	// para permitir mudança de mode
 	if _, ok := m.syncedModes[sel.remoteID]; ok {
 		// Item já syncado, remover de syncedModes e adicionar a selectedItems
 		delete(m.syncedModes, sel.remoteID)
 	}
-	
+
 	sel.mode = mode
 	sel.hasMode = true
 	// Criar cópia do mapa para evitar aliasing com o modelo original
@@ -288,7 +289,7 @@ func (m model) unsyncSelected() (model, tea.Cmd) {
 	// Verificar se o item está syncado (tanto em syncedModes quanto em selectedItems)
 	_, inSyncedModes := m.syncedModes[sel.remoteID]
 	_, inSelectedItems := m.selectedItems[sel.remoteID]
-	
+
 	if !inSyncedModes && !inSelectedItems {
 		m.status = "Este item não está sincronizado."
 		return m, nil
@@ -303,24 +304,24 @@ func (m *model) performUnsync(remoteID string, title string) tea.Cmd {
 		// Chamada RPC para desfazer o sync
 		ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
 		defer cancel()
-		
+
 		res, err := m.client.Unsync(ctx, &insync.UnsyncRequest{
 			AccountId:      m.accountID,
 			RemoteFolderId: remoteID,
 		})
-		
+
 		if err != nil {
 			return listErrMsg{text: fmt.Sprintf("erro ao remover sync de %s: %v", title, err)}
 		}
-		
+
 		if !res.Success {
 			return listErrMsg{text: fmt.Sprintf("erro ao remover sync de %s: %s", title, res.GetErrorMessage())}
 		}
-		
+
 		// Remover do mapa de modes locais
 		delete(m.syncedModes, remoteID)
 		delete(m.selectedItems, remoteID)
-		
+
 		return syncedListMsg{modes: m.syncedModes, localRoot: m.lastLocalRoot}
 	}
 }
@@ -699,7 +700,7 @@ func (m model) View() string {
 	return s
 }
 
-const serverAddr = "localhost:50051"
+const serverAddr = "127.0.0.1:50051"
 
 // serverRunning checks whether a process accepts TCP connections on serverAddr.
 func serverRunning() bool {
@@ -764,7 +765,13 @@ func main() {
 		waitForServer()
 	}
 
-	conn, err := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	authToken, err := igrpc.EnsureAuthToken()
+	if err != nil {
+		log.Fatalf("failed to initialize auth token: %v", err)
+	}
+	dialOptions := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	dialOptions = append(dialOptions, igrpc.AuthDialOptions(authToken)...)
+	conn, err := grpc.Dial(serverAddr, dialOptions...)
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
 	}
