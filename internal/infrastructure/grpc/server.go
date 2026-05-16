@@ -41,51 +41,35 @@ func NewServer(syncUseCase domain.SyncUseCase, repo domain.Repository) *Server {
 
 func (s *Server) forwardUseCaseStatuses() {
 	for st := range s.syncUseCase.Statuses() {
-		s.sendProtoStatus(st.FilePath, st.Status, st.ProgressPercentage, st.TotalSize, st.Provider)
-	}
-}
-
-func protoToDomainProvider(p insync.Provider) domain.Provider {
-	switch p {
-	case insync.Provider_ONEDRIVE:
-		return domain.OneDrive
-	default:
-		return domain.GoogleDrive
+		s.sendProtoStatus(st.FilePath, st.Status, st.ProgressPercentage, st.TotalSize)
 	}
 }
 
 func (s *Server) GetAuthURL(ctx context.Context, req *insync.GetAuthURLRequest) (*insync.GetAuthURLResponse, error) {
-	go s.startCallbackServer(req.Provider)
+	go s.startCallbackServer()
 
-	var url string
-	if req.Provider == insync.Provider_GOOGLE_DRIVE {
-		clientID := os.Getenv("GOOGLE_CLIENT_ID")
-		if clientID == "" {
-			clientID = "1092767661178-2a973gcsj0cip2oknvdkpsl31vugqrp4.apps.googleusercontent.com"
-		}
-		url = fmt.Sprintf("https://accounts.google.com/o/oauth2/auth?client_id=%s&redirect_uri=http://localhost:8080&response_type=code&scope=https://www.googleapis.com/auth/drive", clientID)
-	} else {
-		clientID := os.Getenv("ONEDRIVE_CLIENT_ID")
-		url = fmt.Sprintf("https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=%s&scope=files.readwrite.all&response_type=code&redirect_uri=http://localhost:8080", clientID)
+	clientID := os.Getenv("GOOGLE_CLIENT_ID")
+	if clientID == "" {
+		clientID = "1092767661178-2a973gcsj0cip2oknvdkpsl31vugqrp4.apps.googleusercontent.com"
 	}
+	url := fmt.Sprintf("https://accounts.google.com/o/oauth2/auth?client_id=%s&redirect_uri=http://localhost:8080&response_type=code&scope=https://www.googleapis.com/auth/drive&access_type=offline&prompt=consent", clientID)
 	return &insync.GetAuthURLResponse{Url: url}, nil
 }
 
-func (s *Server) startCallbackServer(provider insync.Provider) {
+func (s *Server) startCallbackServer() {
 	mux := http.NewServeMux()
 	server := &http.Server{Addr: ":8080", Handler: mux}
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
 		if code != "" {
-			fmt.Fprintf(w, "<html><body style='font-family:sans-serif;text-align:center;padding-top:50px;'>")
+			fmt.Fprintf(w, "<html><body style='font-family:sans-serif;padding-top:50px;text-align:center;'>")
 			fmt.Fprintf(w, "<h1 style='color:#4CAF50;'>Autenticação Concluída!</h1>")
 			fmt.Fprintf(w, "<p>O Insync Clone já recebeu suas credenciais. Volte para o terminal.</p>")
 			fmt.Fprintf(w, "</body></html>")
 
 			// Processa o login imediatamente
 			s.AddAccount(context.Background(), &insync.AddAccountRequest{
-				Provider: provider,
 				AuthCode: code,
 			})
 
@@ -102,7 +86,7 @@ func (s *Server) startCallbackServer(provider insync.Provider) {
 func (s *Server) AddAccount(ctx context.Context, req *insync.AddAccountRequest) (*insync.AddAccountResponse, error) {
 	// Código vazio: CLI pergunta se o callback OAuth (navegador → :8080) já gravou a conta.
 	if req.AuthCode == "" {
-		acc, err := s.repo.GetLatestAccountByProvider(ctx, protoToDomainProvider(req.Provider))
+		acc, err := s.repo.GetLatestAccountByProvider(ctx, domain.GoogleDrive)
 		if err != nil {
 			return &insync.AddAccountResponse{Success: false, ErrorMessage: err.Error()}, nil
 		}
@@ -121,8 +105,7 @@ func (s *Server) AddAccount(ctx context.Context, req *insync.AddAccountRequest) 
 
 	token, err := config.Exchange(ctx, req.AuthCode)
 	if err != nil {
-		// Se falhar o exchange mas já tivermos a conta (callback paralelo), retornamos sucesso
-		return &insync.AddAccountResponse{Success: true, AccountId: "active-account"}, nil
+		return &insync.AddAccountResponse{Success: false, ErrorMessage: fmt.Sprintf("falha ao trocar código por token: %v", err)}, nil
 	}
 
 	acc := &domain.Account{
@@ -130,10 +113,11 @@ func (s *Server) AddAccount(ctx context.Context, req *insync.AddAccountRequest) 
 		Provider:     domain.GoogleDrive,
 		AccessToken:  token.AccessToken,
 		RefreshToken: token.RefreshToken,
-		Expiry:       token.Expiry,
+		Expiry:       domain.NullableTime{Time: token.Expiry, Valid: true},
 	}
 
 	s.repo.SaveAccount(ctx, acc)
+	fmt.Printf("[DEBUG] AddAccount - Conta salva: ID=%s, HasAccessToken=%v, HasRefreshToken=%v\n", acc.ID, acc.AccessToken != "", acc.RefreshToken != "")
 	return &insync.AddAccountResponse{Success: true, AccountId: acc.ID}, nil
 }
 
@@ -169,10 +153,8 @@ func (s *Server) ConfigureSync(ctx context.Context, req *insync.ConfigureSyncReq
 	if err := s.repo.SaveSyncConfig(ctx, config); err != nil {
 		return &insync.ConfigureSyncResponse{Success: false, ErrorMessage: err.Error()}, nil
 	}
-	s.sendProtoStatus(req.DisplayName, "Configurado; iniciando sync", 0, 0, acc.Provider)
-	if acc.Provider == domain.GoogleDrive {
-		go s.startGoogleDriveInitialSync(context.Background(), acc, *config)
-	}
+	s.sendProtoStatus(req.DisplayName, "Configurado; iniciando sync", 0, 0)
+	go s.startGoogleDriveInitialSync(context.Background(), acc, *config)
 	return &insync.ConfigureSyncResponse{Success: true}, nil
 }
 
@@ -208,21 +190,20 @@ func (s *Server) ListFiles(ctx context.Context, req *insync.ListFilesRequest) (*
 		return nil, status.Error(codes.NotFound, "conta não encontrada; autentique novamente")
 	}
 
+	// Debug: log account info (sem expor tokens sensíveis)
+	fmt.Printf("[DEBUG] ListFiles - Account ID: %s, Provider: %s, HasAccessToken: %v, HasRefreshToken: %v\n",
+		acc.ID, acc.Provider, acc.AccessToken != "", acc.RefreshToken != "")
+
 	folderID := req.FolderPath
 	if folderID == "" {
 		folderID = "root"
 	}
 
-	switch acc.Provider {
-	case domain.GoogleDrive:
-		files, err := s.listGoogleDriveFolder(ctx, acc, folderID)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "listar drive: %v", err)
-		}
-		return &insync.ListFilesResponse{Files: files}, nil
-	default:
-		return nil, status.Errorf(codes.Unimplemented, "listagem ainda não implementada para %s", acc.Provider)
+	files, err := s.listGoogleDriveFolder(ctx, acc, folderID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "listar drive: %v", err)
 	}
+	return &insync.ListFilesResponse{Files: files}, nil
 }
 
 func googleOAuthConfig() *oauth2.Config {
@@ -235,43 +216,94 @@ func googleOAuthConfig() *oauth2.Config {
 	if cfg.ClientID == "" {
 		cfg.ClientID = "1092767661178-2a973gcsj0cip2oknvdkpsl31vugqrp4.apps.googleusercontent.com"
 	}
+	// Note: ClientSecret não tem fallback padrão - deve ser definido via variável de ambiente
 	return cfg
 }
 
-func (s *Server) listGoogleDriveFolder(ctx context.Context, acc *domain.Account, folderID string) ([]*insync.FileInfo, error) {
+// refreshAndRetry attempts an operation with automatic token refresh on expiration.
+// The Go oauth2 package's Client auto-refreshes when the token is near expiry,
+// but it can still return "token expired" errors. This function catches that case,
+// forces a refresh via the refresh token, persists the new credentials, and retries.
+func (s *Server) refreshAndRetry(ctx context.Context, acc *domain.Account, operation func(context.Context, *oauth2.Token) error) error {
 	cfg := googleOAuthConfig()
 	tok := &oauth2.Token{
 		AccessToken:  acc.AccessToken,
 		RefreshToken: acc.RefreshToken,
-		Expiry:       acc.Expiry,
+		Expiry:       acc.Expiry.Time,
 	}
+
+	// Attempt 1: use the current token (oauth2.Client auto-refreshes if near expiry)
 	httpClient := cfg.Client(ctx, tok)
-	driveSvc, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
-	if err != nil {
-		return nil, err
-	}
-	svc := cloud.NewGoogleDriveService(driveSvc)
-	domainFiles, err := svc.ListFiles(ctx, folderID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]*insync.FileInfo, 0, len(domainFiles))
-	for _, f := range domainFiles {
-		lastMod := ""
-		if !f.LastModified.IsZero() {
-			lastMod = f.LastModified.UTC().Format(time.RFC3339)
+	ctxWithHTTPClient := context.WithValue(ctx, oauth2.HTTPClient, httpClient)
+	if opErr := operation(ctxWithHTTPClient, tok); opErr != nil {
+		// First attempt failed — force a token refresh via refresh_token
+		if acc.RefreshToken == "" {
+			return fmt.Errorf("token expired and no refresh token available (first error: %w)", opErr)
 		}
-		// No domínio da nuvem: Path = nome exibido, ETag = ID remoto do arquivo/pasta no Drive.
-		out = append(out, &insync.FileInfo{
-			Name:         f.Path,
-			Path:         f.ETag,
-			IsDirectory:  f.IsDirectory,
-			Size:         f.Size,
-			Etag:         f.ETag,
-			LastModified: lastMod,
-		})
+
+		tokenSource := cfg.TokenSource(ctx, tok)
+		newTok, tokErr := tokenSource.Token()
+		if tokErr != nil {
+			return fmt.Errorf("token refresh failed: %w (first attempt error: %w)", tokErr, opErr)
+		}
+
+		// Persist refreshed credentials back to the database
+		acc.AccessToken = newTok.AccessToken
+		if newTok.RefreshToken != "" {
+			acc.RefreshToken = newTok.RefreshToken
+		}
+		acc.Expiry = domain.NullableTime{Time: newTok.Expiry, Valid: true}
+		if saveErr := s.repo.SaveAccount(ctx, acc); saveErr != nil {
+			fmt.Printf("failed to save refreshed token: %v\n", saveErr)
+		}
+
+		// Attempt 2: retry with the refreshed token
+		refreshedHTTPClient := cfg.Client(ctx, newTok)
+		refreshedCtx := context.WithValue(ctx, oauth2.HTTPClient, refreshedHTTPClient)
+		return operation(refreshedCtx, newTok)
 	}
-	return out, nil
+
+	return nil
+}
+
+func (s *Server) listGoogleDriveFolder(ctx context.Context, acc *domain.Account, folderID string) ([]*insync.FileInfo, error) {
+	var files []*insync.FileInfo
+	err := s.refreshAndRetry(ctx, acc, func(ctx context.Context, tok *oauth2.Token) error {
+		if tok == nil || tok.AccessToken == "" {
+			return fmt.Errorf("token de autenticação inválido ou ausente")
+		}
+		cfg := googleOAuthConfig()
+		httpClient := cfg.Client(ctx, tok)
+		driveSvc, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
+		if err != nil {
+			return err
+		}
+		svc := cloud.NewGoogleDriveService(driveSvc)
+		domainFiles, err := svc.ListFiles(ctx, folderID)
+		if err != nil {
+			return err
+		}
+		for _, f := range domainFiles {
+			lastMod := ""
+			if !f.LastModified.IsZero() {
+				lastMod = f.LastModified.UTC().Format(time.RFC3339)
+			}
+			out := &insync.FileInfo{
+				Name:         f.Path,
+				Path:         f.ETag,
+				IsDirectory:  f.IsDirectory,
+				Size:         f.Size,
+				Etag:         f.ETag,
+				LastModified: lastMod,
+			}
+			files = append(files, out)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return files, nil
 }
 
 func (s *Server) ListSyncedFiles(ctx context.Context, req *insync.ListSyncedFilesRequest) (*insync.ListSyncedFilesResponse, error) {
@@ -291,11 +323,22 @@ func (s *Server) ListSyncedFiles(ctx context.Context, req *insync.ListSyncedFile
 }
 
 func (s *Server) getGoogleDriveFile(ctx context.Context, acc *domain.Account, fileID string) (*drive.File, error) {
-	driveSvc, err := s.googleDriveService(ctx, acc)
+	var file *drive.File
+	err := s.refreshAndRetry(ctx, acc, func(ctx context.Context, tok *oauth2.Token) error {
+		cfg := googleOAuthConfig()
+		httpClient := cfg.Client(ctx, tok)
+		driveSvc, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
+		if err != nil {
+			return err
+		}
+		var errGet error
+		file, errGet = driveSvc.Files.Get(fileID).Fields("id, name, size, md5Checksum, modifiedTime, mimeType").Do()
+		return errGet
+	})
 	if err != nil {
 		return nil, err
 	}
-	return driveSvc.Files.Get(fileID).Fields("id, name, size, md5Checksum, modifiedTime, mimeType").Do()
+	return file, nil
 }
 
 func (s *Server) googleDriveService(ctx context.Context, acc *domain.Account) (*drive.Service, error) {
@@ -303,34 +346,44 @@ func (s *Server) googleDriveService(ctx context.Context, acc *domain.Account) (*
 	tok := &oauth2.Token{
 		AccessToken:  acc.AccessToken,
 		RefreshToken: acc.RefreshToken,
-		Expiry:       acc.Expiry,
+		Expiry:       acc.Expiry.Time,
 	}
+
 	httpClient := cfg.Client(ctx, tok)
 	return drive.NewService(ctx, option.WithHTTPClient(httpClient))
 }
 
 func (s *Server) startGoogleDriveInitialSync(ctx context.Context, acc *domain.Account, config domain.SyncConfig) {
-	driveSvc, err := s.googleDriveService(ctx, acc)
+	var driveSvc *drive.Service
+	var err error
+
+	err = s.refreshAndRetry(ctx, acc, func(ctx context.Context, tok *oauth2.Token) error {
+		cfg := googleOAuthConfig()
+		httpClient := cfg.Client(ctx, tok)
+		driveSvc, err = drive.NewService(ctx, option.WithHTTPClient(httpClient))
+		return err
+	})
+
 	if err != nil {
-		s.sendProtoStatus(config.LocalPath, "Error", 0, 0, config.Provider)
+		s.sendProtoStatus(config.LocalPath, "Error", 0, 0)
 		return
 	}
 	if config.IsDirectory {
 		if err := os.MkdirAll(config.LocalPath, 0755); err != nil {
-			s.sendProtoStatus(config.LocalPath, "Error", 0, 0, config.Provider)
+			s.sendProtoStatus(config.LocalPath, "Error", 0, 0)
 			return
 		}
 		if err := s.downloadGoogleDriveFolder(ctx, driveSvc, config.RemoteFolderID, config.LocalPath, config); err != nil {
-			s.sendProtoStatus(config.LocalPath, "Error", 0, 0, config.Provider)
+			s.sendProtoStatus(config.LocalPath, "Error", 0, 0)
 		}
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(config.LocalPath), 0755); err != nil {
-		s.sendProtoStatus(config.LocalPath, "Error", 0, 0, config.Provider)
+		s.sendProtoStatus(config.LocalPath, "Error", 0, 0)
 		return
 	}
 	if err := s.downloadGoogleDriveFile(ctx, driveSvc, config.RemoteFolderID, config.LocalPath, config); err != nil {
-		s.sendProtoStatus(config.LocalPath, "Error", 0, 0, config.Provider)
+		s.sendProtoStatus(config.LocalPath, "Error", 0, 0)
 	}
 }
 
@@ -370,7 +423,7 @@ func (s *Server) downloadGoogleDriveFolder(ctx context.Context, driveSvc *drive.
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			if err := s.downloadGoogleDriveFile(ctx, driveSvc, f.Id, localPath, config); err != nil {
-				s.sendProtoStatus(localPath, "Error", 0, f.Size, config.Provider)
+				s.sendProtoStatus(localPath, "Error", 0, f.Size)
 				errCh <- err
 			}
 		}()
@@ -391,8 +444,8 @@ func (s *Server) downloadGoogleDriveFile(ctx context.Context, driveSvc *drive.Se
 	if err != nil {
 		return err
 	}
-	s.sendProtoStatus(localPath, "Downloading", 0, meta.Size, config.Provider)
-	
+	s.sendProtoStatus(localPath, "Downloading", 0, meta.Size)
+
 	var body io.ReadCloser
 	if strings.HasPrefix(meta.MimeType, "application/vnd.google-apps.") {
 		exportMime := googleExportMime(meta.MimeType)
@@ -410,27 +463,27 @@ func (s *Server) downloadGoogleDriveFile(ctx context.Context, driveSvc *drive.Se
 		body = res.Body
 	}
 	defer body.Close()
-	
+
 	out, err := os.Create(localPath)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
-	
+
 	// Track download progress
 	totalSize := meta.Size
-	
+
 	wrapped := &progressReader{
 		reader: body,
 		total:  totalSize,
 		onProgress: func(d, _ int64) {
 			if totalSize > 0 {
 				progress := int32(float64(d) / float64(totalSize) * 100)
-				s.sendProtoStatus(localPath, "Downloading", progress, totalSize, config.Provider)
+				s.sendProtoStatus(localPath, "Downloading", progress, totalSize)
 			}
 		},
 	}
-	
+
 	if _, err := io.Copy(out, wrapped); err != nil {
 		return err
 	}
@@ -454,7 +507,7 @@ func (s *Server) downloadGoogleDriveFile(ctx context.Context, driveSvc *drive.Se
 		LastModified: modTime,
 		IsDirectory:  false,
 	})
-	s.sendProtoStatus(localPath, "Synced", 100, meta.Size, config.Provider)
+	s.sendProtoStatus(localPath, "Synced", 100, meta.Size)
 	return nil
 }
 
@@ -483,18 +536,13 @@ func ensureExportExtension(path string, exportMime string) string {
 	}
 }
 
-func (s *Server) sendProtoStatus(path string, statusText string, progress int32, size int64, provider domain.Provider) {
-	protoProvider := insync.Provider_GOOGLE_DRIVE
-	if provider == domain.OneDrive {
-		protoProvider = insync.Provider_ONEDRIVE
-	}
+func (s *Server) sendProtoStatus(path string, statusText string, progress int32, size int64) {
 	msg := &insync.SyncStatusResponse{
 		FilePath:           path,
 		Status:             statusText,
 		ProgressPercentage: progress,
 		TotalSize:          size,
 		ProcessedSize:      size * int64(progress) / 100,
-		Provider:           protoProvider,
 	}
 	select {
 	case s.statusCh <- msg:

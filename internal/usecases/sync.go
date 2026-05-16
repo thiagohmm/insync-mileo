@@ -105,7 +105,7 @@ func (s *syncUseCase) SyncFolder(ctx context.Context, config domain.SyncConfig) 
 				defer func() { <-downloadSem }()
 
 				if err := s.downloadFileWithProgress(ctx, remote, localPath, config, cloudSvc); err != nil {
-					s.sendStatus(remote.Path, "Error", 0, remote.Size, config.Provider)
+					s.sendStatus(remote.Path, "Error", 0, remote.Size)
 					return
 				}
 				rec := remote
@@ -113,7 +113,7 @@ func (s *syncUseCase) SyncFolder(ctx context.Context, config domain.SyncConfig) 
 				if err := s.repo.UpdateFileMetadata(ctx, &rec); err != nil {
 					log.Printf("UpdateFileMetadata %s: %v", remote.Path, err)
 				}
-				s.sendStatus(remote.Path, "Synced", 100, remote.Size, config.Provider)
+				s.sendStatus(remote.Path, "Synced", 100, remote.Size)
 			}()
 		}
 		delete(localFiles, remote.Path)
@@ -135,7 +135,7 @@ func (s *syncUseCase) SyncFolder(ctx context.Context, config domain.SyncConfig) 
 			log.Printf("DeleteFileMetadata %s: %v", relPath, err)
 		}
 		delete(localFiles, relPath)
-		s.sendStatus(relPath, "Removed local (deleted in cloud)", 100, md.Size, config.Provider)
+		s.sendStatus(relPath, "Removed local (deleted in cloud)", 100, md.Size)
 	}
 
 	// 3) Local → nuvem: ficheiros novos (sem metadados)
@@ -159,10 +159,10 @@ func (s *syncUseCase) SyncFolder(ctx context.Context, config domain.SyncConfig) 
 				uploadSem <- struct{}{}
 				defer func() { <-uploadSem }()
 
-				s.sendStatus(relPath, "Uploading", 0, info.Size(), config.Provider)
+				s.sendStatus(relPath, "Uploading", 0, info.Size())
 				etag, err := cloudSvc.UploadFile(ctx, localFullPath, config.RemoteFolderID)
 				if err != nil {
-					s.sendStatus(relPath, "Error", 0, info.Size(), config.Provider)
+					s.sendStatus(relPath, "Error", 0, info.Size())
 					return
 				}
 
@@ -176,7 +176,7 @@ func (s *syncUseCase) SyncFolder(ctx context.Context, config domain.SyncConfig) 
 				}); err != nil {
 					log.Printf("UpdateFileMetadata upload %s: %v", relPath, err)
 				}
-				s.sendStatus(relPath, "Synced", 100, info.Size(), config.Provider)
+				s.sendStatus(relPath, "Synced", 100, info.Size())
 			}()
 		}
 	}
@@ -199,12 +199,12 @@ func (s *syncUseCase) SyncFolder(ctx context.Context, config domain.SyncConfig) 
 		switch config.Mode {
 		case domain.FullSync:
 			if err := cloudSvc.DeleteFile(ctx, md.ETag); err != nil {
-				s.sendStatus(md.Path, "Error deleting in cloud", 0, md.Size, config.Provider)
+				s.sendStatus(md.Path, "Error deleting in cloud", 0, md.Size)
 				continue
 			}
-			s.sendStatus(md.Path, "Deleted in cloud (full-sync)", 100, md.Size, config.Provider)
+			s.sendStatus(md.Path, "Deleted in cloud (full-sync)", 100, md.Size)
 		default:
-			s.sendStatus(md.Path, "Local delete — cloud kept (base-sync)", 100, md.Size, config.Provider)
+			s.sendStatus(md.Path, "Local delete — cloud kept (base-sync)", 100, md.Size)
 		}
 
 		if err := s.repo.DeleteFileMetadata(ctx, config.ID, md.Path); err != nil {
@@ -243,12 +243,12 @@ func (s *syncUseCase) syncSingleFile(ctx context.Context, config domain.SyncConf
 	switch config.Mode {
 	case domain.FullSync:
 		if err := cloudSvc.DeleteFile(ctx, remoteID); err != nil {
-			s.sendStatus(pathLabel, "Error deleting in cloud", 0, size, config.Provider)
+			s.sendStatus(pathLabel, "Error deleting in cloud", 0, size)
 			return err
 		}
-		s.sendStatus(pathLabel, "Deleted in cloud (full-sync)", 100, size, config.Provider)
+		s.sendStatus(pathLabel, "Deleted in cloud (full-sync)", 100, size)
 	default:
-		s.sendStatus(pathLabel, "Local delete — cloud kept (base-sync)", 100, size, config.Provider)
+		s.sendStatus(pathLabel, "Local delete — cloud kept (base-sync)", 100, size)
 	}
 
 	if md != nil {
@@ -262,9 +262,6 @@ func (s *syncUseCase) syncSingleFile(ctx context.Context, config domain.SyncConf
 func (s *syncUseCase) cloudForConfig(ctx context.Context, config domain.SyncConfig) (domain.CloudService, error) {
 	if svc, ok := s.cloudServices[config.Provider]; ok {
 		return svc, nil
-	}
-	if config.Provider != domain.GoogleDrive {
-		return nil, fmt.Errorf("cloud service not found for provider %s", config.Provider)
 	}
 	acc, err := s.repo.GetAccount(ctx, config.AccountID)
 	if err != nil {
@@ -286,7 +283,7 @@ func (s *syncUseCase) cloudForConfig(ctx context.Context, config domain.SyncConf
 	tok := &oauth2.Token{
 		AccessToken:  acc.AccessToken,
 		RefreshToken: acc.RefreshToken,
-		Expiry:       acc.Expiry,
+		Expiry:       acc.Expiry.Time,
 	}
 	driveSvc, err := drive.NewService(ctx, option.WithHTTPClient(cfg.Client(ctx, tok)))
 	if err != nil {
@@ -298,26 +295,25 @@ func (s *syncUseCase) cloudForConfig(ctx context.Context, config domain.SyncConf
 // downloadFileWithProgress downloads a file from the cloud while sending progress updates.
 // Progress is estimated based on bytes downloaded vs total file size.
 func (s *syncUseCase) downloadFileWithProgress(ctx context.Context, remote domain.FileMetadata, localPath string, config domain.SyncConfig, cloudSvc domain.CloudService) error {
-	s.sendStatus(remote.Path, "Downloading", 0, remote.Size, config.Provider)
+	s.sendStatus(remote.Path, "Downloading", 0, remote.Size)
 
 	err := cloudSvc.DownloadFileWithProgress(ctx, remote.ETag, localPath, func(d, total int64) {
 		if total > 0 {
 			progress := int32(float64(d) / float64(total) * 100)
-			s.sendStatus(remote.Path, "Downloading", progress, total, config.Provider)
+			s.sendStatus(remote.Path, "Downloading", progress, total)
 		}
 	})
 
 	return err
 }
 
-func (s *syncUseCase) sendStatus(path, status string, progress int32, size int64, provider domain.Provider) {
+func (s *syncUseCase) sendStatus(path, status string, progress int32, size int64) {
 	msg := domain.SyncStatus{
 		FilePath:           path,
 		Status:             status,
 		ProgressPercentage: progress,
 		TotalSize:          size,
 		ProcessedSize:      size * int64(progress) / 100,
-		Provider:           provider,
 	}
 	select {
 	case s.statusChan <- msg:

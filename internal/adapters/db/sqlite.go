@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/thiagohmm/insync-clone/internal/domain"
 	_ "modernc.org/sqlite"
@@ -13,11 +15,51 @@ type SQLiteRepository struct {
 	db *sql.DB
 }
 
+// retryOnBusy executa uma operação com retry exponencial backoff em caso de SQLITE_BUSY
+func (r *SQLiteRepository) retryOnBusy(ctx context.Context, op func() error) error {
+	maxRetries := 5
+	baseDelay := 50 * time.Millisecond
+	
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		err := op()
+		if err == nil {
+			return nil
+		}
+		
+		// Verificar se é erro de banco ocupado
+		errMsg := err.Error()
+		if !strings.Contains(errMsg, "SQLITE_BUSY") && !strings.Contains(errMsg, "database is locked") {
+			return err // Erro diferente, retornar imediatamente
+		}
+		
+		// Última tentativa, retornar o erro
+		if attempt == maxRetries-1 {
+			return fmt.Errorf("database busy after %d retries: %w", maxRetries, err)
+		}
+		
+		// Backoff exponencial com jitter
+		delay := baseDelay * time.Duration(1<<uint(attempt))
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+			// Continuar para próxima tentativa
+		}
+	}
+	
+	return fmt.Errorf("max retries exceeded")
+}
+
 func NewSQLiteRepository(dbPath string) (*SQLiteRepository, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	// Adicionar parâmetros para melhor concorrência
+	db, err := sql.Open("sqlite", dbPath+"?_busy_timeout=10000&_journal_mode=WAL&_synchronous=NORMAL")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+
+	// Configurar pool de conexões para evitar contenção
+	db.SetMaxOpenConns(1) // SQLite funciona melhor com uma única conexão de escrita
+	db.SetMaxIdleConns(1)
 
 	repo := &SQLiteRepository{db: db}
 	if err := repo.createTables(); err != nil {
@@ -70,8 +112,10 @@ func (r *SQLiteRepository) createTables() error {
 
 func (r *SQLiteRepository) SaveAccount(ctx context.Context, account *domain.Account) error {
 	query := `INSERT OR REPLACE INTO accounts (id, provider, access_token, refresh_token, expiry) VALUES (?, ?, ?, ?, ?)`
-	_, err := r.db.ExecContext(ctx, query, account.ID, string(account.Provider), account.AccessToken, account.RefreshToken, account.Expiry)
-	return err
+	return r.retryOnBusy(ctx, func() error {
+		_, err := r.db.ExecContext(ctx, query, account.ID, string(account.Provider), account.AccessToken, account.RefreshToken, account.Expiry)
+		return err
+	})
 }
 
 func (r *SQLiteRepository) GetAccount(ctx context.Context, id string) (*domain.Account, error) {
@@ -113,21 +157,25 @@ func (r *SQLiteRepository) SaveSyncConfig(ctx context.Context, config *domain.Sy
 			mode = excluded.mode,
 			provider = excluded.provider,
 			is_directory = excluded.is_directory`
-	result, err := r.db.ExecContext(ctx, query, config.AccountID, config.LocalPath, config.RemoteFolderID, int(config.Mode), string(config.Provider), config.IsDirectory)
-	if err != nil {
-		return err
-	}
-	config.ID, _ = result.LastInsertId()
-	if config.ID == 0 {
-		saved, err := r.GetSyncConfigByPath(ctx, config.LocalPath)
+	
+	// Usar retry para operação de escrita
+	return r.retryOnBusy(ctx, func() error {
+		result, err := r.db.ExecContext(ctx, query, config.AccountID, config.LocalPath, config.RemoteFolderID, int(config.Mode), string(config.Provider), config.IsDirectory)
 		if err != nil {
 			return err
 		}
-		if saved != nil {
-			config.ID = saved.ID
+		config.ID, _ = result.LastInsertId()
+		if config.ID == 0 {
+			saved, err := r.GetSyncConfigByPath(ctx, config.LocalPath)
+			if err != nil {
+				return err
+			}
+			if saved != nil {
+				config.ID = saved.ID
+			}
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func (r *SQLiteRepository) ListSyncConfigs(ctx context.Context) ([]domain.SyncConfig, error) {
@@ -168,8 +216,10 @@ func (r *SQLiteRepository) GetSyncConfigByPath(ctx context.Context, path string)
 
 func (r *SQLiteRepository) UpdateFileMetadata(ctx context.Context, metadata *domain.FileMetadata) error {
 	query := `INSERT OR REPLACE INTO file_metadata (sync_config_id, path, etag, size, last_modified, is_directory) VALUES (?, ?, ?, ?, ?, ?)`
-	_, err := r.db.ExecContext(ctx, query, metadata.SyncConfigID, metadata.Path, metadata.ETag, metadata.Size, metadata.LastModified, metadata.IsDirectory)
-	return err
+	return r.retryOnBusy(ctx, func() error {
+		_, err := r.db.ExecContext(ctx, query, metadata.SyncConfigID, metadata.Path, metadata.ETag, metadata.Size, metadata.LastModified, metadata.IsDirectory)
+		return err
+	})
 }
 
 func (r *SQLiteRepository) GetFileMetadata(ctx context.Context, syncConfigID int64, path string) (*domain.FileMetadata, error) {
@@ -187,8 +237,10 @@ func (r *SQLiteRepository) GetFileMetadata(ctx context.Context, syncConfigID int
 
 func (r *SQLiteRepository) DeleteFileMetadata(ctx context.Context, syncConfigID int64, path string) error {
 	query := `DELETE FROM file_metadata WHERE sync_config_id = ? AND path = ?`
-	_, err := r.db.ExecContext(ctx, query, syncConfigID, path)
-	return err
+	return r.retryOnBusy(ctx, func() error {
+		_, err := r.db.ExecContext(ctx, query, syncConfigID, path)
+		return err
+	})
 }
 
 func (r *SQLiteRepository) ListFileMetadata(ctx context.Context, syncConfigID int64) ([]domain.FileMetadata, error) {

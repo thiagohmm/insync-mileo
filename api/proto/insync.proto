@@ -9,10 +9,10 @@ service InsyncService {
   rpc GetAuthURL(GetAuthURLRequest) returns (GetAuthURLResponse);
   rpc AddAccount(AddAccountRequest) returns (AddAccountResponse);
   rpc ConfigureSync(ConfigureSyncRequest) returns (ConfigureSyncResponse);
-  
+
   // Acompanhamento de status em tempo real
   rpc GetSyncStatus(SyncStatusRequest) returns (stream SyncStatusResponse);
-  
+
   // Listagem de arquivos
   rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
   rpc ListSyncedFiles(ListSyncedFilesRequest) returns (ListSyncedFilesResponse);
@@ -23,22 +23,14 @@ enum SyncMode {
   FULL_SYNC = 1;
 }
 
-enum Provider {
-  GOOGLE_DRIVE = 0;
-  ONEDRIVE = 1;
-}
-
-message GetAuthURLRequest {
-  Provider provider = 1;
-}
+message GetAuthURLRequest {}
 
 message GetAuthURLResponse {
   string url = 1;
 }
 
 message AddAccountRequest {
-  Provider provider = 1;
-  string auth_code = 2; // Simplificação para o fluxo OAuth
+  string auth_code = 1; // Simplificação para o fluxo OAuth
 }
 
 message AddAccountResponse {
@@ -69,7 +61,6 @@ message SyncStatusResponse {
   int32 progress_percentage = 3;
   int64 total_size = 4;
   int64 processed_size = 5;
-  Provider provider = 6;
 }
 
 message ListFilesRequest {

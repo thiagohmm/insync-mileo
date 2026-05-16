@@ -19,21 +19,12 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/pkg/browser"
 	"github.com/thiagohmm/insync-clone/api/proto/insync"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 var docStyle = lipgloss.NewStyle().Margin(1, 2)
-
-type item struct {
-	title, desc string
-}
-
-func (i item) Title() string       { return i.title }
-func (i item) Description() string { return i.desc }
-func (i item) FilterValue() string { return i.title }
 
 // browseItem representa uma linha na navegação pós-auth; Path no proto = ID remoto no Drive.
 type browseItem struct {
@@ -86,14 +77,10 @@ type syncStartedMsg struct {
 	errs  []string
 }
 
-// pollAuthMsg dispara checagem periódica AddAccount(código vazio) após abrir o OAuth no navegador.
-type pollAuthMsg struct{}
-
 type state int
 
 const (
-	stateProviders state = iota
-	stateAuthCode
+	stateAuthCode state = iota
 	stateBrowsing
 	stateLocalPath
 )
@@ -108,7 +95,6 @@ type model struct {
 	cancel        context.CancelFunc
 	state         state
 	accountID     string
-	provider      insync.Provider
 	authCode      string
 	browsePath    []string // do root ao diretório atual, ex.: {"root", "abc..."}
 	syncedModes   map[string]insync.SyncMode
@@ -116,46 +102,47 @@ type model struct {
 	lastLocalRoot string
 }
 
-func providerItems() []list.Item {
-	return []list.Item{
-		item{title: "Google Drive", desc: "Sincronização ativa"},
-		item{title: "OneDrive", desc: "Aguardando configuração"},
-	}
-}
-
 func initialModel(client insync.InsyncServiceClient) model {
 	ti := textinput.New()
-	ti.Placeholder = defaultSyncRoot()
-	ti.Prompt = "Caminho local: "
+	ti.Placeholder = "aguardando autenticação no navegador..."
+	ti.Prompt = ""
 	ti.CharLimit = 512
 	ti.Width = 80
 	m := model{
-		list:          list.New(providerItems(), list.NewDefaultDelegate(), 0, 0),
+		list:          list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
 		progress:      progress.New(progress.WithDefaultGradient()),
 		pathInput:     ti,
-		status:        "Conectado ao Daemon",
+		status:        "Conectado ao Daemon. Iniciando autenticação...",
 		client:        client,
-		state:         stateProviders,
+		state:         stateAuthCode,
 		syncedModes:   make(map[string]insync.SyncMode),
 		selectedItems: make(map[string]browseItem),
 	}
-	m.list.Title = "Insync Clone - Provedores"
+	m.list.Title = "Insync Clone - Google Drive"
 	m.list.SetFilteringEnabled(false)
 	m.list.SetShowFilter(false)
 	m.list.DisableQuitKeybindings()
 	m.ctx, m.cancel = context.WithCancel(context.Background())
+	
+	// Obter URL de autenticação e abrir navegador automaticamente
+	resp, err := client.GetAuthURL(m.ctx, &insync.GetAuthURLRequest{})
+	if err != nil {
+		m.status = fmt.Sprintf("Erro ao obter URL de autenticação: %v", err)
+	} else {
+		m.status = fmt.Sprintf("🌐 Abrindo navegador para autenticação Google Drive...\n\n📋 Se não abrir automaticamente, copie e cole no navegador:\n%s\n\naguardando autorização...", resp.Url)
+		// Tentar abrir o navegador automaticamente
+		go func() {
+			cmd := exec.Command("open", resp.Url) // macOS
+			if cmd.Run() != nil {
+				cmd = exec.Command("xdg-open", resp.Url) // Linux
+				if cmd.Run() != nil {
+					exec.Command("cmd", "/c", "start", resp.Url).Run() // Windows
+				}
+			}
+		}()
+	}
+	
 	return m
-}
-
-func (m model) Init() tea.Cmd {
-	// Não inscreve em GetSyncStatus aqui: o stream polui a tela de OAuth e a auth é por callback no servidor.
-	return nil
-}
-
-func pollAuthTick() tea.Cmd {
-	return tea.Tick(750*time.Millisecond, func(time.Time) tea.Msg {
-		return pollAuthMsg{}
-	})
 }
 
 func (m model) afterAuthSuccess() (model, tea.Cmd) {
@@ -163,20 +150,32 @@ func (m model) afterAuthSuccess() (model, tea.Cmd) {
 	m.browsePath = []string{"root"}
 	m.list.Title = "Google Drive — b: base-sync | f: full-sync"
 	m.status = "Autenticado! Carregando lista da nuvem..."
-	return m, tea.Batch(m.fetchFiles("root"), m.fetchSynced(), m.waitForStatus())
+	return m, tea.Batch(m.fetchFiles("root"), m.fetchSynced())
 }
 
-func (m model) waitForStatus() tea.Cmd {
+func (m model) Init() tea.Cmd {
+	// Se estiver em stateAuthCode, iniciar polling para verificar se a autenticação foi concluída
+	if m.state == stateAuthCode {
+		return m.checkAuthStatus()
+	}
+	return nil
+}
+
+func (m model) checkAuthStatus() tea.Cmd {
 	return func() tea.Msg {
-		stream, err := m.client.GetSyncStatus(m.ctx, &insync.SyncStatusRequest{})
-		if err != nil {
-			return nil
+		time.Sleep(2 * time.Second)
+		
+		// Tentar verificar se já existe uma conta autenticada
+		res, err := m.client.AddAccount(m.ctx, &insync.AddAccountRequest{
+			AuthCode: "", // Código vazio significa: "verificar se já existe conta"
+		})
+		
+		if err == nil && res.Success && res.AccountId != "" {
+			return res // Retorna a resposta com sucesso
 		}
-		res, err := stream.Recv()
-		if err != nil {
-			return nil
-		}
-		return statusMsg(res)
+		
+		// Ainda não autenticou, tentar novamente
+		return m.checkAuthStatus()
 	}
 }
 
@@ -366,11 +365,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key {
 		case "backspace":
 			if m.state == stateBrowsing || m.state == stateAuthCode {
-				m.state = stateProviders
-				m.list.Title = "Insync Clone - Provedores"
+				m.state = stateAuthCode
 				m.authCode = ""
 				m.browsePath = nil
-				m.list.SetItems(providerItems())
+				m.list.ResetSelected()
 				return m, nil
 			}
 		case "b":
@@ -398,28 +396,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, textinput.Blink
 			}
 		case "enter":
-			if m.state == stateProviders {
-				i, ok := m.list.SelectedItem().(item)
-				if ok {
-					if i.title == "Google Drive" {
-						m.provider = insync.Provider_GOOGLE_DRIVE
-					} else {
-						m.provider = insync.Provider_ONEDRIVE
-					}
-
-					res, err := m.client.GetAuthURL(m.ctx, &insync.GetAuthURLRequest{Provider: m.provider})
-					if err == nil {
-						_ = browser.OpenURL(res.Url)
-						m.state = stateAuthCode
-						m.authCode = ""
-						m.status = "Autorize no navegador. Quando voltar a esta tela, a lista abre sozinha; ou cole o código e Enter."
-						return m, pollAuthTick()
-					}
-					m.status = "Erro ao obter URL de autenticação"
-				}
-			} else if m.state == stateAuthCode {
+			if m.state == stateAuthCode {
 				res, err := m.client.AddAccount(m.ctx, &insync.AddAccountRequest{
-					Provider: m.provider,
 					AuthCode: m.authCode,
 				})
 				if err == nil && res.Success {
@@ -518,20 +496,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.status = fmt.Sprintf("%d item(ns) configurado(s). O servidor iniciou o sync em background.", msg.count)
 		}
-		return m, m.waitForStatus()
-	case pollAuthMsg:
-		if m.state != stateAuthCode {
-			return m, nil
-		}
-		res, err := m.client.AddAccount(m.ctx, &insync.AddAccountRequest{
-			Provider: m.provider,
-			AuthCode: "",
-		})
-		if err == nil && res.Success && res.AccountId != "" {
-			m.accountID = res.AccountId
+		return m, nil
+	case *insync.AddAccountResponse:
+		// Resposta do polling de autenticação
+		if msg.Success && msg.AccountId != "" {
+			m.accountID = msg.AccountId
 			return m.afterAuthSuccess()
 		}
-		return m, pollAuthTick()
+		// Ainda aguardando, continuar polling
+		return m, m.checkAuthStatus()
 	case listErrMsg:
 		m.status = "Erro: " + msg.text
 		return m, nil
@@ -543,10 +516,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Status == "Downloading" || msg.Status == "Uploading" {
 			m.status = fmt.Sprintf("%s: %s (%d%%)", msg.Status, msg.FilePath, msg.ProgressPercentage)
 			cmd := m.progress.SetPercent(float64(msg.ProgressPercentage) / 100.0)
-			return m, tea.Batch(cmd, m.waitForStatus())
+			return m, cmd
 		}
 		m.status = fmt.Sprintf("%s: %s", msg.Status, msg.FilePath)
-		return m, m.waitForStatus()
+		return m, nil
 	case progress.FrameMsg:
 		newModel, cmd := m.progress.Update(msg)
 		if pm, ok := newModel.(progress.Model); ok {
@@ -563,20 +536,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	var s string
 	if m.state == stateAuthCode {
-		s = docStyle.Render(fmt.Sprintf("Autenticação %s\n\n%s\n\nCódigo: %s", m.provider, m.status, m.authCode))
+		s = docStyle.Render(fmt.Sprintf("Google Drive\n\n%s\n\nCódigo: %s", m.status, m.authCode))
 	} else if m.state == stateLocalPath {
 		s = docStyle.Render(fmt.Sprintf("%s\n\n%s", m.status, m.pathInput.View()))
 	} else {
 		s = docStyle.Render(m.list.View())
 		s += "\n\n" + m.status + "\n"
 	}
-	
+
 	// Only show progress bar when there's actual progress happening
 	if m.status != "" && (strings.Contains(m.status, "Downloading") || strings.Contains(m.status, "Uploading")) {
 		s += "\n" + m.progress.View() + "\n"
 	}
-	
-	s += "\nctrl+c sair | backspace provedores | b base-sync | f full-sync | p caminho\n"
+
+	s += "\nctrl+c sair | backspace auth | b base-sync | f full-sync | p caminho\n"
 	return s
 }
 

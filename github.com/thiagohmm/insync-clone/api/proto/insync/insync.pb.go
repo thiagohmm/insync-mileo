@@ -67,55 +67,8 @@ func (SyncMode) EnumDescriptor() ([]byte, []int) {
 	return file_api_proto_insync_proto_rawDescGZIP(), []int{0}
 }
 
-type Provider int32
-
-const (
-	Provider_GOOGLE_DRIVE Provider = 0
-	Provider_ONEDRIVE     Provider = 1
-)
-
-// Enum value maps for Provider.
-var (
-	Provider_name = map[int32]string{
-		0: "GOOGLE_DRIVE",
-		1: "ONEDRIVE",
-	}
-	Provider_value = map[string]int32{
-		"GOOGLE_DRIVE": 0,
-		"ONEDRIVE":     1,
-	}
-)
-
-func (x Provider) Enum() *Provider {
-	p := new(Provider)
-	*p = x
-	return p
-}
-
-func (x Provider) String() string {
-	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
-}
-
-func (Provider) Descriptor() protoreflect.EnumDescriptor {
-	return file_api_proto_insync_proto_enumTypes[1].Descriptor()
-}
-
-func (Provider) Type() protoreflect.EnumType {
-	return &file_api_proto_insync_proto_enumTypes[1]
-}
-
-func (x Provider) Number() protoreflect.EnumNumber {
-	return protoreflect.EnumNumber(x)
-}
-
-// Deprecated: Use Provider.Descriptor instead.
-func (Provider) EnumDescriptor() ([]byte, []int) {
-	return file_api_proto_insync_proto_rawDescGZIP(), []int{1}
-}
-
 type GetAuthURLRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Provider      Provider               `protobuf:"varint,1,opt,name=provider,proto3,enum=insync.Provider" json:"provider,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -148,13 +101,6 @@ func (x *GetAuthURLRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use GetAuthURLRequest.ProtoReflect.Descriptor instead.
 func (*GetAuthURLRequest) Descriptor() ([]byte, []int) {
 	return file_api_proto_insync_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *GetAuthURLRequest) GetProvider() Provider {
-	if x != nil {
-		return x.Provider
-	}
-	return Provider_GOOGLE_DRIVE
 }
 
 type GetAuthURLResponse struct {
@@ -203,8 +149,7 @@ func (x *GetAuthURLResponse) GetUrl() string {
 
 type AddAccountRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Provider      Provider               `protobuf:"varint,1,opt,name=provider,proto3,enum=insync.Provider" json:"provider,omitempty"`
-	AuthCode      string                 `protobuf:"bytes,2,opt,name=auth_code,json=authCode,proto3" json:"auth_code,omitempty"` // Simplificação para o fluxo OAuth
+	AuthCode      string                 `protobuf:"bytes,1,opt,name=auth_code,json=authCode,proto3" json:"auth_code,omitempty"` // Simplificação para o fluxo OAuth
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -237,13 +182,6 @@ func (x *AddAccountRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use AddAccountRequest.ProtoReflect.Descriptor instead.
 func (*AddAccountRequest) Descriptor() ([]byte, []int) {
 	return file_api_proto_insync_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *AddAccountRequest) GetProvider() Provider {
-	if x != nil {
-		return x.Provider
-	}
-	return Provider_GOOGLE_DRIVE
 }
 
 func (x *AddAccountRequest) GetAuthCode() string {
@@ -492,7 +430,6 @@ type SyncStatusResponse struct {
 	ProgressPercentage int32                  `protobuf:"varint,3,opt,name=progress_percentage,json=progressPercentage,proto3" json:"progress_percentage,omitempty"`
 	TotalSize          int64                  `protobuf:"varint,4,opt,name=total_size,json=totalSize,proto3" json:"total_size,omitempty"`
 	ProcessedSize      int64                  `protobuf:"varint,5,opt,name=processed_size,json=processedSize,proto3" json:"processed_size,omitempty"`
-	Provider           Provider               `protobuf:"varint,6,opt,name=provider,proto3,enum=insync.Provider" json:"provider,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -560,13 +497,6 @@ func (x *SyncStatusResponse) GetProcessedSize() int64 {
 		return x.ProcessedSize
 	}
 	return 0
-}
-
-func (x *SyncStatusResponse) GetProvider() Provider {
-	if x != nil {
-		return x.Provider
-	}
-	return Provider_GOOGLE_DRIVE
 }
 
 type ListFilesRequest struct {
@@ -903,14 +833,12 @@ var File_api_proto_insync_proto protoreflect.FileDescriptor
 
 const file_api_proto_insync_proto_rawDesc = "" +
 	"\n" +
-	"\x16api/proto/insync.proto\x12\x06insync\"A\n" +
-	"\x11GetAuthURLRequest\x12,\n" +
-	"\bprovider\x18\x01 \x01(\x0e2\x10.insync.ProviderR\bprovider\"&\n" +
+	"\x16api/proto/insync.proto\x12\x06insync\"\x13\n" +
+	"\x11GetAuthURLRequest\"&\n" +
 	"\x12GetAuthURLResponse\x12\x10\n" +
-	"\x03url\x18\x01 \x01(\tR\x03url\"^\n" +
-	"\x11AddAccountRequest\x12,\n" +
-	"\bprovider\x18\x01 \x01(\x0e2\x10.insync.ProviderR\bprovider\x12\x1b\n" +
-	"\tauth_code\x18\x02 \x01(\tR\bauthCode\"r\n" +
+	"\x03url\x18\x01 \x01(\tR\x03url\"0\n" +
+	"\x11AddAccountRequest\x12\x1b\n" +
+	"\tauth_code\x18\x01 \x01(\tR\bauthCode\"r\n" +
 	"\x12AddAccountResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x1d\n" +
 	"\n" +
@@ -928,15 +856,14 @@ const file_api_proto_insync_proto_rawDesc = "" +
 	"\x15ConfigureSyncResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\"\x13\n" +
-	"\x11SyncStatusRequest\"\xee\x01\n" +
+	"\x11SyncStatusRequest\"\xc0\x01\n" +
 	"\x12SyncStatusResponse\x12\x1b\n" +
 	"\tfile_path\x18\x01 \x01(\tR\bfilePath\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12/\n" +
 	"\x13progress_percentage\x18\x03 \x01(\x05R\x12progressPercentage\x12\x1d\n" +
 	"\n" +
 	"total_size\x18\x04 \x01(\x03R\ttotalSize\x12%\n" +
-	"\x0eprocessed_size\x18\x05 \x01(\x03R\rprocessedSize\x12,\n" +
-	"\bprovider\x18\x06 \x01(\x0e2\x10.insync.ProviderR\bprovider\"R\n" +
+	"\x0eprocessed_size\x18\x05 \x01(\x03R\rprocessedSize\"R\n" +
 	"\x10ListFilesRequest\x12\x1f\n" +
 	"\vfolder_path\x18\x01 \x01(\tR\n" +
 	"folderPath\x12\x1d\n" +
@@ -964,10 +891,7 @@ const file_api_proto_insync_proto_rawDesc = "" +
 	"\x05files\x18\x01 \x03(\v2\x12.insync.SyncedFileR\x05files*(\n" +
 	"\bSyncMode\x12\r\n" +
 	"\tBASE_SYNC\x10\x00\x12\r\n" +
-	"\tFULL_SYNC\x10\x01**\n" +
-	"\bProvider\x12\x10\n" +
-	"\fGOOGLE_DRIVE\x10\x00\x12\f\n" +
-	"\bONEDRIVE\x10\x012\xc7\x03\n" +
+	"\tFULL_SYNC\x10\x012\xc7\x03\n" +
 	"\rInsyncService\x12C\n" +
 	"\n" +
 	"GetAuthURL\x12\x19.insync.GetAuthURLRequest\x1a\x1a.insync.GetAuthURLResponse\x12C\n" +
@@ -990,51 +914,47 @@ func file_api_proto_insync_proto_rawDescGZIP() []byte {
 	return file_api_proto_insync_proto_rawDescData
 }
 
-var file_api_proto_insync_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_api_proto_insync_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_api_proto_insync_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_api_proto_insync_proto_goTypes = []any{
 	(SyncMode)(0),                   // 0: insync.SyncMode
-	(Provider)(0),                   // 1: insync.Provider
-	(*GetAuthURLRequest)(nil),       // 2: insync.GetAuthURLRequest
-	(*GetAuthURLResponse)(nil),      // 3: insync.GetAuthURLResponse
-	(*AddAccountRequest)(nil),       // 4: insync.AddAccountRequest
-	(*AddAccountResponse)(nil),      // 5: insync.AddAccountResponse
-	(*ConfigureSyncRequest)(nil),    // 6: insync.ConfigureSyncRequest
-	(*ConfigureSyncResponse)(nil),   // 7: insync.ConfigureSyncResponse
-	(*SyncStatusRequest)(nil),       // 8: insync.SyncStatusRequest
-	(*SyncStatusResponse)(nil),      // 9: insync.SyncStatusResponse
-	(*ListFilesRequest)(nil),        // 10: insync.ListFilesRequest
-	(*FileInfo)(nil),                // 11: insync.FileInfo
-	(*ListFilesResponse)(nil),       // 12: insync.ListFilesResponse
-	(*SyncedFile)(nil),              // 13: insync.SyncedFile
-	(*ListSyncedFilesRequest)(nil),  // 14: insync.ListSyncedFilesRequest
-	(*ListSyncedFilesResponse)(nil), // 15: insync.ListSyncedFilesResponse
+	(*GetAuthURLRequest)(nil),       // 1: insync.GetAuthURLRequest
+	(*GetAuthURLResponse)(nil),      // 2: insync.GetAuthURLResponse
+	(*AddAccountRequest)(nil),       // 3: insync.AddAccountRequest
+	(*AddAccountResponse)(nil),      // 4: insync.AddAccountResponse
+	(*ConfigureSyncRequest)(nil),    // 5: insync.ConfigureSyncRequest
+	(*ConfigureSyncResponse)(nil),   // 6: insync.ConfigureSyncResponse
+	(*SyncStatusRequest)(nil),       // 7: insync.SyncStatusRequest
+	(*SyncStatusResponse)(nil),      // 8: insync.SyncStatusResponse
+	(*ListFilesRequest)(nil),        // 9: insync.ListFilesRequest
+	(*FileInfo)(nil),                // 10: insync.FileInfo
+	(*ListFilesResponse)(nil),       // 11: insync.ListFilesResponse
+	(*SyncedFile)(nil),              // 12: insync.SyncedFile
+	(*ListSyncedFilesRequest)(nil),  // 13: insync.ListSyncedFilesRequest
+	(*ListSyncedFilesResponse)(nil), // 14: insync.ListSyncedFilesResponse
 }
 var file_api_proto_insync_proto_depIdxs = []int32{
-	1,  // 0: insync.GetAuthURLRequest.provider:type_name -> insync.Provider
-	1,  // 1: insync.AddAccountRequest.provider:type_name -> insync.Provider
-	0,  // 2: insync.ConfigureSyncRequest.mode:type_name -> insync.SyncMode
-	1,  // 3: insync.SyncStatusResponse.provider:type_name -> insync.Provider
-	11, // 4: insync.ListFilesResponse.files:type_name -> insync.FileInfo
-	0,  // 5: insync.SyncedFile.mode:type_name -> insync.SyncMode
-	13, // 6: insync.ListSyncedFilesResponse.files:type_name -> insync.SyncedFile
-	2,  // 7: insync.InsyncService.GetAuthURL:input_type -> insync.GetAuthURLRequest
-	4,  // 8: insync.InsyncService.AddAccount:input_type -> insync.AddAccountRequest
-	6,  // 9: insync.InsyncService.ConfigureSync:input_type -> insync.ConfigureSyncRequest
-	8,  // 10: insync.InsyncService.GetSyncStatus:input_type -> insync.SyncStatusRequest
-	10, // 11: insync.InsyncService.ListFiles:input_type -> insync.ListFilesRequest
-	14, // 12: insync.InsyncService.ListSyncedFiles:input_type -> insync.ListSyncedFilesRequest
-	3,  // 13: insync.InsyncService.GetAuthURL:output_type -> insync.GetAuthURLResponse
-	5,  // 14: insync.InsyncService.AddAccount:output_type -> insync.AddAccountResponse
-	7,  // 15: insync.InsyncService.ConfigureSync:output_type -> insync.ConfigureSyncResponse
-	9,  // 16: insync.InsyncService.GetSyncStatus:output_type -> insync.SyncStatusResponse
-	12, // 17: insync.InsyncService.ListFiles:output_type -> insync.ListFilesResponse
-	15, // 18: insync.InsyncService.ListSyncedFiles:output_type -> insync.ListSyncedFilesResponse
-	13, // [13:19] is the sub-list for method output_type
-	7,  // [7:13] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	0,  // 0: insync.ConfigureSyncRequest.mode:type_name -> insync.SyncMode
+	10, // 1: insync.ListFilesResponse.files:type_name -> insync.FileInfo
+	0,  // 2: insync.SyncedFile.mode:type_name -> insync.SyncMode
+	12, // 3: insync.ListSyncedFilesResponse.files:type_name -> insync.SyncedFile
+	1,  // 4: insync.InsyncService.GetAuthURL:input_type -> insync.GetAuthURLRequest
+	3,  // 5: insync.InsyncService.AddAccount:input_type -> insync.AddAccountRequest
+	5,  // 6: insync.InsyncService.ConfigureSync:input_type -> insync.ConfigureSyncRequest
+	7,  // 7: insync.InsyncService.GetSyncStatus:input_type -> insync.SyncStatusRequest
+	9,  // 8: insync.InsyncService.ListFiles:input_type -> insync.ListFilesRequest
+	13, // 9: insync.InsyncService.ListSyncedFiles:input_type -> insync.ListSyncedFilesRequest
+	2,  // 10: insync.InsyncService.GetAuthURL:output_type -> insync.GetAuthURLResponse
+	4,  // 11: insync.InsyncService.AddAccount:output_type -> insync.AddAccountResponse
+	6,  // 12: insync.InsyncService.ConfigureSync:output_type -> insync.ConfigureSyncResponse
+	8,  // 13: insync.InsyncService.GetSyncStatus:output_type -> insync.SyncStatusResponse
+	11, // 14: insync.InsyncService.ListFiles:output_type -> insync.ListFilesResponse
+	14, // 15: insync.InsyncService.ListSyncedFiles:output_type -> insync.ListSyncedFilesResponse
+	10, // [10:16] is the sub-list for method output_type
+	4,  // [4:10] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_insync_proto_init() }
@@ -1047,7 +967,7 @@ func file_api_proto_insync_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_insync_proto_rawDesc), len(file_api_proto_insync_proto_rawDesc)),
-			NumEnums:      2,
+			NumEnums:      1,
 			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
