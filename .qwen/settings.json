@@ -3,7 +3,8 @@
     "allow": [
       "Bash(protoc *)",
       "Bash(go *)",
-      "Bash(cp *)"
+      "Bash(cp *)",
+      "Bash(git add *)"
     ]
   },
   "$version": 4

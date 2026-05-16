@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(protoc *)",
-      "Bash(go *)"
+      "Bash(go *)",
+      "Bash(cp *)"
     ]
   },
   "$version": 4
