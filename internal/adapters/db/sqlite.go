@@ -214,6 +214,27 @@ func (r *SQLiteRepository) GetSyncConfigByPath(ctx context.Context, path string)
 	return &c, nil
 }
 
+func (r *SQLiteRepository) DeleteSyncConfigByRemoteID(ctx context.Context, accountID, remoteFolderID string) error {
+	// Primeiro deletar os metadados de arquivos associados
+	// Para isso, precisamos dos IDs dos sync_configs que correspondem
+	query := `DELETE FROM file_metadata WHERE sync_config_id IN (
+		SELECT id FROM sync_configs WHERE account_id = ? AND remote_folder_id = ?
+	)`
+	if err := r.retryOnBusy(ctx, func() error {
+		_, err := r.db.ExecContext(ctx, query, accountID, remoteFolderID)
+		return err
+	}); err != nil {
+		return err
+	}
+	
+	// Depois deletar o sync_config em si
+	query = `DELETE FROM sync_configs WHERE account_id = ? AND remote_folder_id = ?`
+	return r.retryOnBusy(ctx, func() error {
+		_, err := r.db.ExecContext(ctx, query, accountID, remoteFolderID)
+		return err
+	})
+}
+
 func (r *SQLiteRepository) UpdateFileMetadata(ctx context.Context, metadata *domain.FileMetadata) error {
 	query := `INSERT OR REPLACE INTO file_metadata (sync_config_id, path, etag, size, last_modified, is_directory) VALUES (?, ?, ?, ?, ?, ?)`
 	return r.retryOnBusy(ctx, func() error {

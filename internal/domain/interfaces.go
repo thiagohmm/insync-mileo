@@ -11,6 +11,7 @@ type Repository interface {
 	SaveSyncConfig(ctx context.Context, config *SyncConfig) error
 	ListSyncConfigs(ctx context.Context) ([]SyncConfig, error)
 	GetSyncConfigByPath(ctx context.Context, path string) (*SyncConfig, error)
+	DeleteSyncConfigByRemoteID(ctx context.Context, accountID, remoteFolderID string) error
 
 	UpdateFileMetadata(ctx context.Context, metadata *FileMetadata) error
 	GetFileMetadata(ctx context.Context, syncConfigID int64, path string) (*FileMetadata, error)

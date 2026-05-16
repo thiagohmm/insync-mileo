@@ -22,6 +22,7 @@ const (
 	InsyncService_GetAuthURL_FullMethodName      = "/insync.InsyncService/GetAuthURL"
 	InsyncService_AddAccount_FullMethodName      = "/insync.InsyncService/AddAccount"
 	InsyncService_ConfigureSync_FullMethodName   = "/insync.InsyncService/ConfigureSync"
+	InsyncService_Unsync_FullMethodName          = "/insync.InsyncService/Unsync"
 	InsyncService_GetSyncStatus_FullMethodName   = "/insync.InsyncService/GetSyncStatus"
 	InsyncService_ListFiles_FullMethodName       = "/insync.InsyncService/ListFiles"
 	InsyncService_ListSyncedFiles_FullMethodName = "/insync.InsyncService/ListSyncedFiles"
@@ -35,6 +36,7 @@ type InsyncServiceClient interface {
 	GetAuthURL(ctx context.Context, in *GetAuthURLRequest, opts ...grpc.CallOption) (*GetAuthURLResponse, error)
 	AddAccount(ctx context.Context, in *AddAccountRequest, opts ...grpc.CallOption) (*AddAccountResponse, error)
 	ConfigureSync(ctx context.Context, in *ConfigureSyncRequest, opts ...grpc.CallOption) (*ConfigureSyncResponse, error)
+	Unsync(ctx context.Context, in *UnsyncRequest, opts ...grpc.CallOption) (*UnsyncResponse, error)
 	// Acompanhamento de status em tempo real
 	GetSyncStatus(ctx context.Context, in *SyncStatusRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SyncStatusResponse], error)
 	// Listagem de arquivos
@@ -74,6 +76,16 @@ func (c *insyncServiceClient) ConfigureSync(ctx context.Context, in *ConfigureSy
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ConfigureSyncResponse)
 	err := c.cc.Invoke(ctx, InsyncService_ConfigureSync_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *insyncServiceClient) Unsync(ctx context.Context, in *UnsyncRequest, opts ...grpc.CallOption) (*UnsyncResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UnsyncResponse)
+	err := c.cc.Invoke(ctx, InsyncService_Unsync_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -127,6 +139,7 @@ type InsyncServiceServer interface {
 	GetAuthURL(context.Context, *GetAuthURLRequest) (*GetAuthURLResponse, error)
 	AddAccount(context.Context, *AddAccountRequest) (*AddAccountResponse, error)
 	ConfigureSync(context.Context, *ConfigureSyncRequest) (*ConfigureSyncResponse, error)
+	Unsync(context.Context, *UnsyncRequest) (*UnsyncResponse, error)
 	// Acompanhamento de status em tempo real
 	GetSyncStatus(*SyncStatusRequest, grpc.ServerStreamingServer[SyncStatusResponse]) error
 	// Listagem de arquivos
@@ -150,6 +163,9 @@ func (UnimplementedInsyncServiceServer) AddAccount(context.Context, *AddAccountR
 }
 func (UnimplementedInsyncServiceServer) ConfigureSync(context.Context, *ConfigureSyncRequest) (*ConfigureSyncResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ConfigureSync not implemented")
+}
+func (UnimplementedInsyncServiceServer) Unsync(context.Context, *UnsyncRequest) (*UnsyncResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Unsync not implemented")
 }
 func (UnimplementedInsyncServiceServer) GetSyncStatus(*SyncStatusRequest, grpc.ServerStreamingServer[SyncStatusResponse]) error {
 	return status.Error(codes.Unimplemented, "method GetSyncStatus not implemented")
@@ -235,6 +251,24 @@ func _InsyncService_ConfigureSync_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _InsyncService_Unsync_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UnsyncRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(InsyncServiceServer).Unsync(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: InsyncService_Unsync_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(InsyncServiceServer).Unsync(ctx, req.(*UnsyncRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _InsyncService_GetSyncStatus_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(SyncStatusRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -300,6 +334,10 @@ var InsyncService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ConfigureSync",
 			Handler:    _InsyncService_ConfigureSync_Handler,
+		},
+		{
+			MethodName: "Unsync",
+			Handler:    _InsyncService_Unsync_Handler,
 		},
 		{
 			MethodName: "ListFiles",

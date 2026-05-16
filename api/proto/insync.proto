@@ -9,6 +9,7 @@ service InsyncService {
   rpc GetAuthURL(GetAuthURLRequest) returns (GetAuthURLResponse);
   rpc AddAccount(AddAccountRequest) returns (AddAccountResponse);
   rpc ConfigureSync(ConfigureSyncRequest) returns (ConfigureSyncResponse);
+  rpc Unsync(UnsyncRequest) returns (UnsyncResponse);
 
   // Acompanhamento de status em tempo real
   rpc GetSyncStatus(SyncStatusRequest) returns (stream SyncStatusResponse);
@@ -95,4 +96,14 @@ message ListSyncedFilesRequest {
 
 message ListSyncedFilesResponse {
   repeated SyncedFile files = 1;
+}
+
+message UnsyncRequest {
+  string account_id = 1;
+  string remote_folder_id = 2;
+}
+
+message UnsyncResponse {
+  bool success = 1;
+  string error_message = 2;
 }

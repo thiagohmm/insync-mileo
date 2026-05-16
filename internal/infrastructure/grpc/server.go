@@ -322,6 +322,23 @@ func (s *Server) ListSyncedFiles(ctx context.Context, req *insync.ListSyncedFile
 	return &insync.ListSyncedFilesResponse{Files: files}, nil
 }
 
+func (s *Server) Unsync(ctx context.Context, req *insync.UnsyncRequest) (*insync.UnsyncResponse, error) {
+	if req.AccountId == "" || req.RemoteFolderId == "" {
+		return &insync.UnsyncResponse{Success: false, ErrorMessage: "account_id e remote_folder_id são obrigatórios"}, nil
+	}
+	
+	// Remover o sync config do banco de dados
+	err := s.repo.DeleteSyncConfigByRemoteID(ctx, req.AccountId, req.RemoteFolderId)
+	if err != nil {
+		return &insync.UnsyncResponse{Success: false, ErrorMessage: fmt.Sprintf("failed to delete sync config: %v", err)}, nil
+	}
+	
+	// Enviar status de sucesso
+	s.sendProtoStatus(req.RemoteFolderId, "Unsynced - removed from local", 100, 0)
+	
+	return &insync.UnsyncResponse{Success: true}, nil
+}
+
 func (s *Server) getGoogleDriveFile(ctx context.Context, acc *domain.Account, fileID string) (*drive.File, error) {
 	var file *drive.File
 	err := s.refreshAndRetry(ctx, acc, func(ctx context.Context, tok *oauth2.Token) error {

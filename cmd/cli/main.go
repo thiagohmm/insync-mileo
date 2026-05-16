@@ -56,6 +56,10 @@ func (i browseItem) Title() string {
 	if i.isBack {
 		return i.title
 	}
+	// Exibição:
+	// - [] para itens que sofreram unsync (não têm mode mais)
+	// - [B] para base-sync
+	// - [F] para full-sync
 	marker := "[]"
 	if i.hasMode {
 		if i.mode == insync.SyncMode_FULL_SYNC {
@@ -140,6 +144,12 @@ func initialModel(client insync.InsyncServiceClient) model {
 	m.list.SetShowFilter(true)
 	m.list.Filter = fuzzyFilter
 	m.list.DisableQuitKeybindings()
+	
+	// Substituir KeyMap para evitar conflito com 'b' e 'f'
+	m.list.KeyMap.PrevPage.SetKeys("left", "h", "pgup")
+	m.list.KeyMap.NextPage.SetKeys("right", "l", "pgdown")
+	m.list.KeyMap.PrevPage.SetHelp("←/h/pgup", "prev page")
+	m.list.KeyMap.NextPage.SetHelp("→/l/pgdn", "next page")
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	
 	// Obter URL de autenticação e abrir navegador automaticamente
@@ -238,6 +248,14 @@ func (m model) toggleSyncForSelection(mode insync.SyncMode) (model, tea.Cmd) {
 	if !ok || sel.isBack {
 		return m, nil
 	}
+	
+	// Se o item já está em syncedModes (syncado anteriormente), mover para selectedItems
+	// para permitir mudança de mode
+	if _, ok := m.syncedModes[sel.remoteID]; ok {
+		// Item já syncado, remover de syncedModes e adicionar a selectedItems
+		delete(m.syncedModes, sel.remoteID)
+	}
+	
 	sel.mode = mode
 	sel.hasMode = true
 	// Criar cópia do mapa para evitar aliasing com o modelo original
@@ -259,6 +277,52 @@ func (m model) toggleSyncForSelection(mode insync.SyncMode) (model, tea.Cmd) {
 	}
 	m.status = fmt.Sprintf("%d item(ns) selecionado(s). Pressione p para escolher o caminho local.", len(m.selectedItems))
 	return m, nil
+}
+
+func (m model) unsyncSelected() (model, tea.Cmd) {
+	sel, ok := m.list.SelectedItem().(browseItem)
+	if !ok || sel.isBack {
+		return m, nil
+	}
+
+	// Verificar se o item está syncado (tanto em syncedModes quanto em selectedItems)
+	_, inSyncedModes := m.syncedModes[sel.remoteID]
+	_, inSelectedItems := m.selectedItems[sel.remoteID]
+	
+	if !inSyncedModes && !inSelectedItems {
+		m.status = "Este item não está sincronizado."
+		return m, nil
+	}
+
+	m.status = fmt.Sprintf("Removendo sync de %s... (apenas local)", sel.title)
+	return m, m.performUnsync(sel.remoteID, sel.title)
+}
+
+func (m *model) performUnsync(remoteID string, title string) tea.Cmd {
+	return func() tea.Msg {
+		// Chamada RPC para desfazer o sync
+		ctx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
+		defer cancel()
+		
+		res, err := m.client.Unsync(ctx, &insync.UnsyncRequest{
+			AccountId:      m.accountID,
+			RemoteFolderId: remoteID,
+		})
+		
+		if err != nil {
+			return listErrMsg{text: fmt.Sprintf("erro ao remover sync de %s: %v", title, err)}
+		}
+		
+		if !res.Success {
+			return listErrMsg{text: fmt.Sprintf("erro ao remover sync de %s: %s", title, res.GetErrorMessage())}
+		}
+		
+		// Remover do mapa de modes locais
+		delete(m.syncedModes, remoteID)
+		delete(m.selectedItems, remoteID)
+		
+		return syncedListMsg{modes: m.syncedModes, localRoot: m.lastLocalRoot}
+	}
 }
 
 func (m *model) refreshVisibleMarkers() {
@@ -425,14 +489,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// O bubbles/list vai tratar teclas de navegação/filter e gerar um cmd
 			var cmd tea.Cmd
 			m.list, cmd = m.list.Update(msg)
-			
+
 			// Se a lista gerou um cmd, ela processou a tecla (navegação ou filter)
 			if cmd != nil {
 				return m, cmd
 			}
-			
+
 			// Se a lista não processou, tenta as teclas de ação
 			switch key {
+			case "u":
+				model, cmd := m.unsyncSelected()
+				return model, cmd
 			case "b":
 				model, cmd := m.toggleSyncForSelection(insync.SyncMode_BASE_SYNC)
 				return model, cmd
@@ -516,9 +583,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, f := range msg.files {
 			desc := "Arquivo"
 			if f.IsDirectory {
-				desc = "Pasta — Enter abrir | b base-sync | f full-sync"
+				desc = "Pasta — Enter abrir | u unsync | b base-sync | f full-sync"
 			} else {
-				desc = "Arquivo — b base-sync | f full-sync"
+				desc = "Arquivo — u unsync | b base-sync | f full-sync"
 			}
 			bi := browseItem{
 				title:       f.Name,
@@ -541,7 +608,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.browsePath) > 0 {
 			cur = m.browsePath[len(m.browsePath)-1]
 		}
-		m.status = fmt.Sprintf("Pasta: %s — /↑↓/jk mover | Enter abrir pasta | b base-sync | f full-sync | p caminho", cur)
+		m.status = fmt.Sprintf("Pasta: %s — /↑↓/jk mover | Enter abrir pasta | u unsync | b base-sync | f full-sync | p caminho", cur)
 		return m, nil
 	case syncedListMsg:
 		if msg.modes != nil {
@@ -628,7 +695,7 @@ func (m model) View() string {
 		s += "\n" + m.progress.View() + "\n"
 	}
 
-	s += "\n/ buscar | esc sair (s/n) | b base-sync | f full-sync | p caminho | ctrl+c\n"
+	s += "\n/ buscar | esc sair (s/n) | u unsync | b base-sync | f full-sync | p caminho | ctrl+c\n"
 	return s
 }
 

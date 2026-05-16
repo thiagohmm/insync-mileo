@@ -5,7 +5,10 @@
       "Bash(go *)",
       "Bash(cp *)",
       "Bash(git add *)",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(find *)",
+      "Bash(rm *)",
+      "Bash(grep *)"
     ]
   },
   "$version": 4
