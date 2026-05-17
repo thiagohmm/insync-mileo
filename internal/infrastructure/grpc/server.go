@@ -123,7 +123,14 @@ func (s *Server) AddAccount(ctx context.Context, req *insync.AddAccountRequest) 
 			return &insync.AddAccountResponse{Success: false, ErrorMessage: err.Error()}, nil
 		}
 		if acc != nil {
-			return &insync.AddAccountResponse{Success: true, AccountId: acc.ID}, nil
+			// Valida se o token ainda é válido antes de permitir o uso
+			if s.isTokenValid(ctx, acc) {
+				return &insync.AddAccountResponse{Success: true, AccountId: acc.ID}, nil
+			}
+			// Token inválido/expirado, limpa a conta inválida
+			fmt.Printf("[INFO] Token inválido para conta %s, removendo...\n", acc.ID)
+			s.repo.DeleteAccount(ctx, acc.ID)
+			return &insync.AddAccountResponse{Success: false, ErrorMessage: "Token expirado. Autentique novamente no navegador."}, nil
 		}
 		return &insync.AddAccountResponse{Success: false, ErrorMessage: "Aguardando autorização no navegador..."}, nil
 	}
@@ -300,6 +307,33 @@ func (s *Server) refreshAndRetry(ctx context.Context, acc *domain.Account, opera
 	}
 
 	return nil
+}
+
+// isTokenValid verifica se o token de acesso ainda é válido fazendo uma requisição simples ao Drive
+func (s *Server) isTokenValid(ctx context.Context, acc *domain.Account) bool {
+	cfg := googleOAuthConfig()
+	tok := &oauth2.Token{
+		AccessToken:  acc.AccessToken,
+		RefreshToken: acc.RefreshToken,
+		Expiry:       acc.Expiry.Time,
+	}
+
+	httpClient := cfg.Client(ctx, tok)
+	driveSvc, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
+	if err != nil {
+		fmt.Printf("[DEBUG] isTokenValid - Erro ao criar Drive service: %v\n", err)
+		return false
+	}
+
+	// Tenta fazer uma requisição simples: obter informações do usuário (about)
+	_, err = driveSvc.About.Get().Fields("user/emailAddress").Context(ctx).Do()
+	if err != nil {
+		fmt.Printf("[DEBUG] isTokenValid - Token inválido: %v\n", err)
+		return false
+	}
+
+	fmt.Printf("[DEBUG] isTokenValid - Token válido para conta %s\n", acc.ID)
+	return true
 }
 
 func (s *Server) listGoogleDriveFolder(ctx context.Context, acc *domain.Account, folderID string) ([]*insync.FileInfo, error) {

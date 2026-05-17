@@ -122,6 +122,7 @@ type model struct {
 	selectedItems map[string]browseItem
 	lastLocalRoot string
 	confirmText   string // "s" ou "n"
+	alreadyAuthed bool   // indica se já existe conta autenticada válida
 }
 
 func initialModel(client insync.InsyncServiceClient) model {
@@ -153,7 +154,24 @@ func initialModel(client insync.InsyncServiceClient) model {
 	m.list.KeyMap.NextPage.SetHelp("→/l/pgdn", "next page")
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 
-	// Obter URL de autenticação e abrir navegador automaticamente
+	// Primeiro, verificar se já existe uma conta autenticada e válida
+	authStatus, err := client.AddAccount(m.ctx, &insync.AddAccountRequest{
+		AuthCode: "", // Código vazio significa: "verificar se já existe conta"
+	})
+	if err == nil && authStatus.Success && authStatus.AccountId != "" {
+		// Já está autenticado! Ir direto para o estado de navegação
+		m.accountID = authStatus.AccountId
+		m.alreadyAuthed = true
+		m.state = stateBrowsing
+		m.browsePath = []string{"root"}
+		m.list.Title = "Google Drive — b: base-sync | f: full-sync"
+		m.status = "Autenticado! Carregando lista da nuvem..."
+		fmt.Printf("[DEBUG] Conta já autenticada encontrada: %s\n", authStatus.AccountId)
+		// Não abrir o navegador, ir direto para a listagem
+		return m
+	}
+
+	// Não está autenticado, obter URL de autenticação e abrir navegador
 	resp, err := client.GetAuthURL(m.ctx, &insync.GetAuthURLRequest{})
 	if err != nil {
 		m.status = fmt.Sprintf("Erro ao obter URL de autenticação: %v", err)
@@ -183,6 +201,11 @@ func (m model) afterAuthSuccess() (model, tea.Cmd) {
 }
 
 func (m model) Init() tea.Cmd {
+	// Se já estiver autenticado, carregar lista de arquivos imediatamente
+	if m.alreadyAuthed {
+		return tea.Batch(m.fetchFiles("root"), m.fetchSynced())
+	}
+
 	// Se estiver em stateAuthCode, iniciar polling para verificar se a autenticação foi concluída
 	if m.state == stateAuthCode {
 		return m.checkAuthStatus()

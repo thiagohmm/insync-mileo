@@ -71,6 +71,16 @@ func (m *MockRepository) GetLatestAccountByProvider(_ context.Context, provider 
 	return nil, nil
 }
 
+func (m *MockRepository) DeleteAccount(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.ErrorOn["DeleteAccount"]; err != nil {
+		return err
+	}
+	delete(m.Accounts, id)
+	return nil
+}
+
 func (m *MockRepository) SaveSyncConfig(_ context.Context, config *SyncConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

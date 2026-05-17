@@ -168,6 +168,14 @@ func (r *SQLiteRepository) GetLatestAccountByProvider(ctx context.Context, provi
 	return &acc, nil
 }
 
+func (r *SQLiteRepository) DeleteAccount(ctx context.Context, id string) error {
+	query := `DELETE FROM accounts WHERE id = ?`
+	return r.retryOnBusy(ctx, func() error {
+		_, err := r.db.ExecContext(ctx, query, id)
+		return err
+	})
+}
+
 func (r *SQLiteRepository) SaveSyncConfig(ctx context.Context, config *domain.SyncConfig) error {
 	query := `INSERT INTO sync_configs (account_id, local_path, remote_folder_id, mode, provider, is_directory)
 		VALUES (?, ?, ?, ?, ?, ?)

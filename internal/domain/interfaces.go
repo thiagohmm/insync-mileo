@@ -7,6 +7,7 @@ type Repository interface {
 	GetAccount(ctx context.Context, id string) (*Account, error)
 	// Conta mais recente para um provedor (ex.: após OAuth no callback HTTP).
 	GetLatestAccountByProvider(ctx context.Context, provider Provider) (*Account, error)
+	DeleteAccount(ctx context.Context, id string) error
 
 	SaveSyncConfig(ctx context.Context, config *SyncConfig) error
 	ListSyncConfigs(ctx context.Context) ([]SyncConfig, error)
