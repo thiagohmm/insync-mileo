@@ -2,8 +2,10 @@ package grpc
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -577,6 +579,14 @@ func (s *Server) downloadGoogleDriveFile(ctx context.Context, driveSvc *drive.Se
 	if _, err := io.Copy(out, wrapped); err != nil {
 		return err
 	}
+
+	// Verify download integrity via MD5 checksum when available.
+	if meta.Md5Checksum != "" {
+		if cerr := s.verifyLocalMD5(localPath, meta.Md5Checksum); cerr != nil {
+			fmt.Printf("checksum mismatch for %s: %v\n", localPath, cerr)
+		}
+	}
+
 	rel := filepath.Base(localPath)
 	if config.IsDirectory {
 		if r, err := filepath.Rel(config.LocalPath, localPath); err == nil {
@@ -596,8 +606,29 @@ func (s *Server) downloadGoogleDriveFile(ctx context.Context, driveSvc *drive.Se
 		Size:         meta.Size,
 		LastModified: modTime,
 		IsDirectory:  false,
+		MD5Checksum:  meta.Md5Checksum,
 	})
 	s.sendProtoStatus(localPath, "Synced", 100, meta.Size)
+	return nil
+}
+
+// verifyLocalMD5 computes the MD5 hash of the local file and compares it
+// against expectedHex. Returns an error on mismatch.
+func (s *Server) verifyLocalMD5(localPath, expectedHex string) error {
+	f, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("checksum open: %w", err)
+	}
+	defer f.Close()
+
+	h := md5.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("checksum read: %w", err)
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if !strings.EqualFold(got, expectedHex) {
+		return fmt.Errorf("MD5 mismatch: got %s, want %s", got, expectedHex)
+	}
 	return nil
 }
 

@@ -2,9 +2,12 @@ package usecases
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -416,5 +419,190 @@ func TestSyncUseCase_DownloadFileWithProgress_SendsStatus(t *testing.T) {
 		}
 	case <-time.After(500 * time.Millisecond):
 		// ok, no status yet
+	}
+}
+
+// -----------------------------
+// Checksum verification tests
+// -----------------------------
+
+func TestVerifyLocalMD5Checksum(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	t.Run("match", func(t *testing.T) {
+		path := filepath.Join(tmpDir, "match.txt")
+		const content = "hello checksum"
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		actualMD5 := computeMD5String(content)
+		if err := verifyLocalMD5Checksum(path, actualMD5); err != nil {
+			t.Errorf("expected match, got error: %v", err)
+		}
+	})
+
+	t.Run("mismatch", func(t *testing.T) {
+		path := filepath.Join(tmpDir, "mismatch.txt")
+		if err := os.WriteFile(path, []byte("hello"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		err := verifyLocalMD5Checksum(path, "00000000000000000000000000000000")
+		if err == nil {
+			t.Error("expected mismatch error")
+		} else if !strings.Contains(err.Error(), "MD5 mismatch") {
+			t.Errorf("expected MD5 mismatch error, got: %v", err)
+		}
+	})
+
+	t.Run("file not found", func(t *testing.T) {
+		err := verifyLocalMD5Checksum(filepath.Join(tmpDir, "missing.txt"), "00000000000000000000000000000000")
+		if err == nil {
+			t.Error("expected error for missing file")
+		}
+	})
+
+	t.Run("case insensitive match", func(t *testing.T) {
+		path := filepath.Join(tmpDir, "case-match.txt")
+		const content = "case test"
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		expected := computeMD5String(content)
+		upperExpected := strings.ToUpper(expected)
+		if err := verifyLocalMD5Checksum(path, upperExpected); err != nil {
+			t.Errorf("expected case-insensitive match, got error: %v", err)
+		}
+	})
+}
+
+func computeMD5String(data string) string {
+	h := md5.New()
+	h.Write([]byte(data))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// -----------------------------
+// Conflict detection test
+// -----------------------------
+
+func TestSyncUseCase_ConflictDetection(t *testing.T) {
+	repo := domain.NewMockRepository()
+	cloudSvc := domain.NewMockCloudService(domain.GoogleDrive)
+
+	tmpDir := t.TempDir()
+	localPath := filepath.Join(tmpDir, "sync-conflict")
+	os.MkdirAll(localPath, 0755)
+
+	cfg := &domain.SyncConfig{
+		AccountID:      "acct-conflict",
+		LocalPath:      localPath,
+		RemoteFolderID: "remote-conflict",
+		Mode:           domain.BaseSync,
+		Provider:       domain.GoogleDrive,
+		IsDirectory:    true,
+	}
+	if err := repo.SaveSyncConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("SaveSyncConfig() error: %v", err)
+	}
+
+	// Create a local file that was previously synced (has metadata)
+	localFilePath := filepath.Join(localPath, "conflict-file.txt")
+	lastKnownTime := time.Now().Add(-1 * time.Hour)
+	if err := os.WriteFile(localFilePath, []byte("local modified content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Touch the file so modTime is definitely after lastKnownTime
+	time.Sleep(10 * time.Millisecond)
+	if err := os.Chtimes(localFilePath, time.Now(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Existing metadata from previous sync (old ETag and old mod time)
+	if err := repo.UpdateFileMetadata(context.Background(), &domain.FileMetadata{
+		SyncConfigID: cfg.ID,
+		Path:         "conflict-file.txt",
+		ETag:         "old-etag",
+		Size:         100,
+		LastModified: lastKnownTime,
+	}); err != nil {
+		t.Fatalf("UpdateFileMetadata() error: %v", err)
+	}
+
+	// Remote has the same file but with a different ETag (remote changed)
+	cloudSvc.Files = []domain.FileMetadata{
+		{Path: "conflict-file.txt", ETag: "new-etag", Size: 200, IsDirectory: false},
+	}
+
+	suc := NewSyncUseCase(repo, []domain.CloudService{cloudSvc})
+
+	err := suc.SyncFolder(context.Background(), *cfg)
+	if err != nil {
+		t.Errorf("SyncFolder() error: %v", err)
+	}
+
+	// The conflict file should have been created (remote version saved as .conflict)
+	conflictPath := localFilePath + ".conflict"
+	if _, err := os.Stat(conflictPath); os.IsNotExist(err) {
+		t.Error("expected .conflict file to be created")
+	}
+
+	// The original local file should still exist (preserved)
+	if _, err := os.Stat(localFilePath); os.IsNotExist(err) {
+		t.Error("expected original local file to be preserved")
+	}
+}
+
+// -----------------------------
+// errgroup worker pool test
+// -----------------------------
+
+func TestSyncUseCase_ErrgroupConcurrency(t *testing.T) {
+	repo := domain.NewMockRepository()
+	cloudSvc := domain.NewMockCloudService(domain.GoogleDrive)
+
+	tmpDir := t.TempDir()
+	localPath := filepath.Join(tmpDir, "eg-dir")
+	os.MkdirAll(localPath, 0755)
+
+	cfg := &domain.SyncConfig{
+		AccountID:      "acct-eg",
+		LocalPath:      localPath,
+		RemoteFolderID: "remote-eg",
+		Mode:           domain.BaseSync,
+		Provider:       domain.GoogleDrive,
+		IsDirectory:    true,
+	}
+	if err := repo.SaveSyncConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("SaveSyncConfig() error: %v", err)
+	}
+
+	// Create many remote files to exercise the errgroup concurrency limit
+	files := make([]domain.FileMetadata, 0, 20)
+	for i := 0; i < 20; i++ {
+		files = append(files, domain.FileMetadata{
+			Path:        fmt.Sprintf("file-%d.txt", i),
+			ETag:        fmt.Sprintf("etag-%d", i),
+			Size:        100,
+			IsDirectory: false,
+		})
+	}
+	cloudSvc.Files = files
+
+	suc := NewSyncUseCase(repo, []domain.CloudService{cloudSvc})
+
+	err := suc.SyncFolder(context.Background(), *cfg)
+	if err != nil {
+		t.Errorf("SyncFolder() with 20 files error: %v", err)
+	}
+
+	// Verify all 20 metadata entries were saved
+	for i := 0; i < 20; i++ {
+		meta, err := repo.GetFileMetadata(context.Background(), cfg.ID, fmt.Sprintf("file-%d.txt", i))
+		if err != nil {
+			t.Fatalf("GetFileMetadata(file-%d.txt) error: %v", i, err)
+		}
+		if meta == nil {
+			t.Errorf("expected metadata for file-%d.txt", i)
+		}
 	}
 }

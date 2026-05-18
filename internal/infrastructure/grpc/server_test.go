@@ -2,6 +2,8 @@ package grpc
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -263,4 +265,72 @@ func TestEnsureExportExtension(t *testing.T) {
 			}
 		})
 	}
+}
+
+// -----------------------------
+// MD5 checksum verification tests
+// -----------------------------
+
+func TestVerifyLocalMD5(t *testing.T) {
+	srv := NewServer(domain.NewMockSyncUseCase(), domain.NewMockRepository())
+	tmpDir := t.TempDir()
+
+	t.Run("match", func(t *testing.T) {
+		path := filepath.Join(tmpDir, "check.txt")
+		const content = "checksum test data"
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		expected := computeMD5ForTest(content)
+		if err := srv.verifyLocalMD5(path, expected); err != nil {
+			t.Errorf("expected match, got error: %v", err)
+		}
+	})
+
+	t.Run("mismatch", func(t *testing.T) {
+		path := filepath.Join(tmpDir, "bad.txt")
+		if err := os.WriteFile(path, []byte("data"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		err := srv.verifyLocalMD5(path, "00000000000000000000000000000000")
+		if err == nil {
+			t.Error("expected mismatch error")
+		}
+	})
+
+	t.Run("file not found", func(t *testing.T) {
+		err := srv.verifyLocalMD5(filepath.Join(tmpDir, "missing.txt"), "00000000000000000000000000000000")
+		if err == nil {
+			t.Error("expected error for missing file")
+		}
+	})
+
+	t.Run("case insensitive", func(t *testing.T) {
+		path := filepath.Join(tmpDir, "case.txt")
+		if err := os.WriteFile(path, []byte("case"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		expected := computeMD5ForTest("case")
+		if err := srv.verifyLocalMD5(path, expected); err != nil {
+			t.Errorf("expected case-insensitive match, got error: %v", err)
+		}
+	})
+
+	t.Run("non-empty file vs empty expected hex", func(t *testing.T) {
+		// When expectedHex is empty but the file has content, it should be a mismatch.
+		path := filepath.Join(tmpDir, "skip.txt")
+		if err := os.WriteFile(path, []byte("skip"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		err := srv.verifyLocalMD5(path, "")
+		if err == nil {
+			t.Error("expected mismatch when expectedHex is empty but file has content")
+		}
+	})
+}
+
+func computeMD5ForTest(data string) string {
+	h := md5.New()
+	h.Write([]byte(data))
+	return hex.EncodeToString(h.Sum(nil))
 }

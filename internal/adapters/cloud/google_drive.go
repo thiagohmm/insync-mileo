@@ -45,6 +45,7 @@ func (g *googleDriveService) ListFiles(ctx context.Context, folderID string) ([]
 			Size:         f.Size,
 			LastModified: mod,
 			IsDirectory:  f.MimeType == "application/vnd.google-apps.folder",
+			MD5Checksum:  f.Md5Checksum,
 		})
 	}
 	return files, nil

@@ -167,6 +167,7 @@ func (m *MockRepository) UpdateFileMetadata(_ context.Context, metadata *FileMet
 		Size:         metadata.Size,
 		LastModified: metadata.LastModified,
 		IsDirectory:  metadata.IsDirectory,
+		MD5Checksum:  metadata.MD5Checksum,
 	}
 	return nil
 }

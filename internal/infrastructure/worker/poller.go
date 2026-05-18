@@ -23,10 +23,13 @@ func NewRemotePoller(syncUseCase domain.SyncUseCase, repo domain.Repository, int
 }
 
 func (p *RemotePoller) Start(ctx context.Context) {
+	log.Printf("Remote poller started with interval %v", p.interval)
+
+	// First poll runs immediately on startup.
+	p.poll(ctx)
+
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
-
-	log.Printf("Remote poller started with interval %v", p.interval)
 
 	for {
 		select {

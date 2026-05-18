@@ -135,3 +135,44 @@ func TestRemotePoller_Poll_MultipleConfigs(t *testing.T) {
 		t.Errorf("expected 3 synced configs, got %d", len(suc.SyncedConfigs))
 	}
 }
+
+func TestRemotePoller_Start_PollImmediately(t *testing.T) {
+	repo := domain.NewMockRepository()
+	suc := domain.NewMockSyncUseCase()
+	poller := NewRemotePoller(suc, repo, time.Hour) // long interval
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Seed one config so we can verify immediate poll.
+	cfg := &domain.SyncConfig{
+		AccountID:      "acct-imm",
+		LocalPath:      "/tmp/poll-imm",
+		RemoteFolderID: "remote-imm",
+		Mode:           domain.BaseSync,
+		Provider:       domain.GoogleDrive,
+		IsDirectory:    true,
+	}
+	if err := repo.SaveSyncConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("SaveSyncConfig() error: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		poller.Start(ctx)
+		close(done)
+	}()
+
+	// Wait a bit for the first immediate poll to happen.
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("poller Start did not stop after context cancel")
+	}
+
+	if len(suc.SyncedConfigs) < 1 {
+		t.Errorf("expected at least 1 synced config from immediate poll, got %d", len(suc.SyncedConfigs))
+	}
+}

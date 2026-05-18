@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -16,6 +17,10 @@ type Watcher struct {
 	watcher     *fsnotify.Watcher
 	syncUseCase domain.SyncUseCase
 	repo        domain.Repository
+
+	// cachedConfigs holds the latest sync configurations, refreshed periodically.
+	cachedConfigs []domain.SyncConfig
+	configsMu     sync.Mutex
 }
 
 func NewWatcher(syncUseCase domain.SyncUseCase, repo domain.Repository) (*Watcher, error) {
@@ -69,6 +74,12 @@ func (w *Watcher) addConfiguredPaths(ctx context.Context) {
 		log.Printf("watcher: failed to list configs: %v", err)
 		return
 	}
+
+	// Update the in-memory cache so that event handlers don't need to query the DB.
+	w.configsMu.Lock()
+	w.cachedConfigs = configs
+	w.configsMu.Unlock()
+
 	for _, config := range configs {
 		path := config.LocalPath
 		if !config.IsDirectory {
@@ -87,11 +98,10 @@ func (w *Watcher) addConfiguredPaths(ctx context.Context) {
 }
 
 func (w *Watcher) syncMatchingConfig(ctx context.Context, changedPath string) {
-	configs, err := w.repo.ListSyncConfigs(ctx)
-	if err != nil {
-		log.Printf("watcher: failed to list configs: %v", err)
-		return
-	}
+	w.configsMu.Lock()
+	configs := w.cachedConfigs
+	w.configsMu.Unlock()
+
 	for _, config := range configs {
 		if !config.IsDirectory {
 			if changedPath != config.LocalPath {

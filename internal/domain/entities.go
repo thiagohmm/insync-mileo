@@ -89,6 +89,9 @@ type FileMetadata struct {
 	Size         int64
 	LastModified time.Time
 	IsDirectory  bool
+	// MD5Checksum is the hex-encoded MD5 hash reported by the cloud provider.
+	// Used to verify download integrity.
+	MD5Checksum string
 }
 
 type SyncStatus struct {

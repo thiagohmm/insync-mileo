@@ -2,17 +2,20 @@ package usecases
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/thiagohmm/insync-clone/internal/adapters/cloud"
 	"github.com/thiagohmm/insync-clone/internal/domain"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/option"
 )
@@ -85,9 +88,9 @@ func (s *syncUseCase) SyncFolder(ctx context.Context, config domain.SyncConfig) 
 		return fmt.Errorf("failed to walk local path: %w", err)
 	}
 
-	// 1) Nuvem → local: download novos/alterados
-	var downloadWG sync.WaitGroup
-	downloadSem := make(chan struct{}, 4)
+	// 1) Nuvem → local: download novos/alterados (com conflito e checksum)
+	downloadGrp, downloadCtx := errgroup.WithContext(ctx)
+	downloadGrp.SetLimit(4)
 	for _, remote := range remoteFiles {
 		if remote.IsDirectory {
 			delete(localFiles, remote.Path)
@@ -100,29 +103,56 @@ func (s *syncUseCase) SyncFolder(ctx context.Context, config domain.SyncConfig) 
 		metadata, errMeta := s.repo.GetFileMetadata(ctx, config.ID, remote.Path)
 
 		if errMeta != nil || metadata == nil || metadata.ETag != remote.ETag {
+			// Conflict detection: both remote changed (ETag differs) AND local was
+			// modified since last sync (mod time > metadata.LastModified).
+			if metadata != nil && metadata.ETag != remote.ETag {
+				if localInfo, exists := localFiles[remote.Path]; exists {
+					if localInfo.ModTime().After(metadata.LastModified) {
+						s.sendStatus(remote.Path, "Conflict detected", 0, remote.Size)
+						conflictPath := localPath + ".conflict"
+						if err := s.downloadFileWithProgress(downloadCtx, remote, conflictPath, config, cloudSvc); err != nil {
+							s.sendStatus(remote.Path, "Error creating conflict copy", 0, remote.Size)
+						} else {
+							s.sendStatus(remote.Path, "Conflict saved as .conflict", 100, remote.Size)
+							log.Printf("conflict: %s saved as %s", remote.Path, conflictPath)
+						}
+						delete(localFiles, remote.Path)
+						continue
+					}
+				}
+			}
+
 			remote := remote
 			localPath := localPath
-			downloadWG.Add(1)
-			go func() {
-				defer downloadWG.Done()
-				downloadSem <- struct{}{}
-				defer func() { <-downloadSem }()
-
-				if err := s.downloadFileWithProgress(ctx, remote, localPath, config, cloudSvc); err != nil {
+			downloadGrp.Go(func() error {
+				if err := s.downloadFileWithProgress(downloadCtx, remote, localPath, config, cloudSvc); err != nil {
 					s.sendStatus(remote.Path, "Error", 0, remote.Size)
-					return
+					return fmt.Errorf("download %s: %w", remote.Path, err)
 				}
+
+				// Checksum verification after download.
+				if remote.MD5Checksum != "" {
+					if err := verifyLocalMD5Checksum(localPath, remote.MD5Checksum); err != nil {
+						log.Printf("checksum mismatch %s: %v", remote.Path, err)
+						s.sendStatus(remote.Path, "Checksum mismatch", 100, remote.Size)
+					}
+				}
+
 				rec := remote
 				rec.SyncConfigID = config.ID
-				if err := s.repo.UpdateFileMetadata(ctx, &rec); err != nil {
+				if err := s.repo.UpdateFileMetadata(downloadCtx, &rec); err != nil {
 					log.Printf("UpdateFileMetadata %s: %v", remote.Path, err)
 				}
 				s.sendStatus(remote.Path, "Synced", 100, remote.Size)
-			}()
+				return nil
+			})
 		}
 		delete(localFiles, remote.Path)
 	}
-	downloadWG.Wait()
+	if err := downloadGrp.Wait(); err != nil {
+		// Log the first download error but continue processing uploads.
+		log.Printf("download phase: %v", err)
+	}
 
 	// 2) Apagado na nuvem: ficheiro ainda em disco e com metadados → remove cópia local (base e full)
 	for relPath, info := range localFiles {
@@ -143,8 +173,8 @@ func (s *syncUseCase) SyncFolder(ctx context.Context, config domain.SyncConfig) 
 	}
 
 	// 3) Local → nuvem: ficheiros novos (sem metadados)
-	var uploadWG sync.WaitGroup
-	uploadSem := make(chan struct{}, 4)
+	uploadGrp, uploadCtx := errgroup.WithContext(ctx)
+	uploadGrp.SetLimit(4)
 	for relPath, info := range localFiles {
 		if info.IsDir() {
 			continue
@@ -157,20 +187,15 @@ func (s *syncUseCase) SyncFolder(ctx context.Context, config domain.SyncConfig) 
 			relPath := relPath
 			info := info
 			localFullPath := localFullPath
-			uploadWG.Add(1)
-			go func() {
-				defer uploadWG.Done()
-				uploadSem <- struct{}{}
-				defer func() { <-uploadSem }()
-
+			uploadGrp.Go(func() error {
 				s.sendStatus(relPath, "Uploading", 0, info.Size())
-				etag, err := cloudSvc.UploadFile(ctx, localFullPath, config.RemoteFolderID)
+				etag, err := cloudSvc.UploadFile(uploadCtx, localFullPath, config.RemoteFolderID)
 				if err != nil {
 					s.sendStatus(relPath, "Error", 0, info.Size())
-					return
+					return fmt.Errorf("upload %s: %w", relPath, err)
 				}
 
-				if err := s.repo.UpdateFileMetadata(ctx, &domain.FileMetadata{
+				if err := s.repo.UpdateFileMetadata(uploadCtx, &domain.FileMetadata{
 					SyncConfigID: config.ID,
 					Path:         relPath,
 					ETag:         etag,
@@ -181,10 +206,13 @@ func (s *syncUseCase) SyncFolder(ctx context.Context, config domain.SyncConfig) 
 					log.Printf("UpdateFileMetadata upload %s: %v", relPath, err)
 				}
 				s.sendStatus(relPath, "Synced", 100, info.Size())
-			}()
+				return nil
+			})
 		}
 	}
-	uploadWG.Wait()
+	if err := uploadGrp.Wait(); err != nil {
+		log.Printf("upload phase: %v", err)
+	}
 
 	// 4) Apagado só local: ficheiro sumiu do disco mas ainda há metadados
 	metaList, err := s.repo.ListFileMetadata(ctx, config.ID)
@@ -325,12 +353,32 @@ func (s *syncUseCase) sendStatus(path, status string, progress int32, size int64
 	}
 }
 
+// verifyLocalMD5Checksum computes the MD5 hash of the file at localPath and
+// compares it against expectedHex. Returns an error on mismatch.
+func verifyLocalMD5Checksum(localPath, expectedHex string) error {
+	f, err := os.Open(localPath)
+	if err != nil {
+		return fmt.Errorf("checksum open: %w", err)
+	}
+	defer f.Close()
+
+	h := md5.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("checksum read: %w", err)
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if !strings.EqualFold(got, expectedHex) {
+		return fmt.Errorf("MD5 mismatch: got %s, want %s", got, expectedHex)
+	}
+	return nil
+}
+
 func safeJoinLocal(base string, name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || name == "." || name == ".." {
 		return "", fmt.Errorf("nome remoto inválido: %q", name)
 	}
-	if filepath.IsAbs(name) || strings.ContainsAny(name, `/\`) || filepath.Clean(name) != name {
+	if filepath.IsAbs(name) || strings.ContainsAny(name, `/\\`) || filepath.Clean(name) != name {
 		return "", fmt.Errorf("nome remoto inseguro: %q", name)
 	}
 	baseAbs, err := filepath.Abs(base)

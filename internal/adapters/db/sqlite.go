@@ -116,6 +116,7 @@ func (r *SQLiteRepository) createTables() error {
 			size INTEGER,
 			last_modified DATETIME,
 			is_directory BOOLEAN,
+			md5_checksum TEXT DEFAULT '',
 			FOREIGN KEY (sync_config_id) REFERENCES sync_configs(id),
 			UNIQUE(sync_config_id, path)
 		);`,
@@ -127,6 +128,7 @@ func (r *SQLiteRepository) createTables() error {
 		}
 	}
 	_, _ = r.db.Exec(`ALTER TABLE sync_configs ADD COLUMN is_directory BOOLEAN NOT NULL DEFAULT 1`)
+	_, _ = r.db.Exec(`ALTER TABLE file_metadata ADD COLUMN md5_checksum TEXT DEFAULT ''`)
 	return nil
 }
 
@@ -264,22 +266,26 @@ func (r *SQLiteRepository) DeleteSyncConfigByRemoteID(ctx context.Context, accou
 }
 
 func (r *SQLiteRepository) UpdateFileMetadata(ctx context.Context, metadata *domain.FileMetadata) error {
-	query := `INSERT OR REPLACE INTO file_metadata (sync_config_id, path, etag, size, last_modified, is_directory) VALUES (?, ?, ?, ?, ?, ?)`
+	query := `INSERT OR REPLACE INTO file_metadata (sync_config_id, path, etag, size, last_modified, is_directory, md5_checksum) VALUES (?, ?, ?, ?, ?, ?, ?)`
 	return r.retryOnBusy(ctx, func() error {
-		_, err := r.db.ExecContext(ctx, query, metadata.SyncConfigID, metadata.Path, metadata.ETag, metadata.Size, metadata.LastModified, metadata.IsDirectory)
+		_, err := r.db.ExecContext(ctx, query, metadata.SyncConfigID, metadata.Path, metadata.ETag, metadata.Size, metadata.LastModified, metadata.IsDirectory, metadata.MD5Checksum)
 		return err
 	})
 }
 
 func (r *SQLiteRepository) GetFileMetadata(ctx context.Context, syncConfigID int64, path string) (*domain.FileMetadata, error) {
-	query := `SELECT id, sync_config_id, path, etag, size, last_modified, is_directory FROM file_metadata WHERE sync_config_id = ? AND path = ?`
+	query := `SELECT id, sync_config_id, path, etag, size, last_modified, is_directory, md5_checksum FROM file_metadata WHERE sync_config_id = ? AND path = ?`
 	row := r.db.QueryRowContext(ctx, query, syncConfigID, path)
 	var m domain.FileMetadata
-	if err := row.Scan(&m.ID, &m.SyncConfigID, &m.Path, &m.ETag, &m.Size, &m.LastModified, &m.IsDirectory); err != nil {
+	var md5 sql.NullString
+	if err := row.Scan(&m.ID, &m.SyncConfigID, &m.Path, &m.ETag, &m.Size, &m.LastModified, &m.IsDirectory, &md5); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, err
+	}
+	if md5.Valid {
+		m.MD5Checksum = md5.String
 	}
 	return &m, nil
 }
@@ -293,7 +299,7 @@ func (r *SQLiteRepository) DeleteFileMetadata(ctx context.Context, syncConfigID 
 }
 
 func (r *SQLiteRepository) ListFileMetadata(ctx context.Context, syncConfigID int64) ([]domain.FileMetadata, error) {
-	query := `SELECT id, sync_config_id, path, etag, size, last_modified, is_directory FROM file_metadata WHERE sync_config_id = ?`
+	query := `SELECT id, sync_config_id, path, etag, size, last_modified, is_directory, md5_checksum FROM file_metadata WHERE sync_config_id = ?`
 	rows, err := r.db.QueryContext(ctx, query, syncConfigID)
 	if err != nil {
 		return nil, err
@@ -303,8 +309,12 @@ func (r *SQLiteRepository) ListFileMetadata(ctx context.Context, syncConfigID in
 	var list []domain.FileMetadata
 	for rows.Next() {
 		var m domain.FileMetadata
-		if err := rows.Scan(&m.ID, &m.SyncConfigID, &m.Path, &m.ETag, &m.Size, &m.LastModified, &m.IsDirectory); err != nil {
+		var md5 sql.NullString
+		if err := rows.Scan(&m.ID, &m.SyncConfigID, &m.Path, &m.ETag, &m.Size, &m.LastModified, &m.IsDirectory, &md5); err != nil {
 			return nil, err
+		}
+		if md5.Valid {
+			m.MD5Checksum = md5.String
 		}
 		list = append(list, m)
 	}
