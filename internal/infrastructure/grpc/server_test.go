@@ -77,6 +77,22 @@ func TestValidatedLocalSyncPathRequiresAllowedRoot(t *testing.T) {
 	}
 }
 
+func TestValidatedLocalSyncPathAllowsAnyPathWhenAllowedRootUnset(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error: %v", err)
+	}
+	path := filepath.Join(wd, "custom-sync")
+
+	got, err := validatedLocalSyncPath(path)
+	if err != nil {
+		t.Fatalf("validatedLocalSyncPath() error: %v", err)
+	}
+	if got != path {
+		t.Fatalf("validatedLocalSyncPath() = %q, want %q", got, path)
+	}
+}
+
 func TestValidatedLocalSyncPathRejectsSymlink(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()

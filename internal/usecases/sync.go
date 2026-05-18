@@ -69,6 +69,17 @@ func (s *syncUseCase) SyncFolder(ctx context.Context, config domain.SyncConfig) 
 
 	remoteFiles, err := cloudSvc.ListFiles(ctx, config.RemoteFolderID)
 	if err != nil {
+		listErr := strings.ToLower(err.Error())
+		canFallbackToFile := strings.Contains(listErr, "notfound") || strings.Contains(listErr, "file not found")
+		if canFallbackToFile {
+			info, statErr := os.Stat(config.LocalPath)
+			canFallbackToFile = os.IsNotExist(statErr) || (statErr == nil && !info.IsDir())
+		}
+		if canFallbackToFile {
+			if fallbackErr := s.syncSingleFile(ctx, config, cloudSvc); fallbackErr == nil {
+				return nil
+			}
+		}
 		return fmt.Errorf("failed to list remote files: %w", err)
 	}
 
@@ -261,6 +272,32 @@ func (s *syncUseCase) syncSingleFile(ctx context.Context, config domain.SyncConf
 		return nil
 	} else if !os.IsNotExist(statErr) {
 		return statErr
+	}
+
+	if md == nil {
+		remote := domain.FileMetadata{
+			SyncConfigID: config.ID,
+			Path:         filepath.Base(config.LocalPath),
+			ETag:         config.RemoteFolderID,
+			IsDirectory:  false,
+		}
+		if checksum, err := cloudSvc.GetFileChecksum(ctx, config.RemoteFolderID); err == nil {
+			remote.MD5Checksum = checksum
+		}
+		if err := s.downloadFileWithProgress(ctx, remote, config.LocalPath, config, cloudSvc); err != nil {
+			s.sendStatus(remote.Path, "Error", 0, 0)
+			return fmt.Errorf("download single file %s: %w", remote.Path, err)
+		}
+		info, statErr := os.Stat(config.LocalPath)
+		if statErr == nil {
+			remote.Size = info.Size()
+			remote.LastModified = info.ModTime()
+		}
+		if err := s.repo.UpdateFileMetadata(ctx, &remote); err != nil {
+			log.Printf("UpdateFileMetadata single file %s: %v", remote.Path, err)
+		}
+		s.sendStatus(remote.Path, "Synced", 100, remote.Size)
+		return nil
 	}
 
 	size := int64(0)

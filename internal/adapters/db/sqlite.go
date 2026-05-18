@@ -129,7 +129,7 @@ func (r *SQLiteRepository) createTables() error {
 	}
 	_, _ = r.db.Exec(`ALTER TABLE sync_configs ADD COLUMN is_directory BOOLEAN NOT NULL DEFAULT 1`)
 	_, _ = r.db.Exec(`ALTER TABLE file_metadata ADD COLUMN md5_checksum TEXT DEFAULT ''`)
-	return nil
+	return r.createAdvancedTables()
 }
 
 func (r *SQLiteRepository) SaveAccount(ctx context.Context, account *domain.Account) error {

@@ -174,10 +174,13 @@ func (s *Server) ConfigureSync(ctx context.Context, req *insync.ConfigureSyncReq
 		return &insync.ConfigureSyncResponse{Success: false, ErrorMessage: "conta não encontrada"}, nil
 	}
 
-	isDirectory := req.IsDirectory
 	localPath, err := validatedLocalSyncPath(req.LocalPath)
 	if err != nil {
 		return &insync.ConfigureSyncResponse{Success: false, ErrorMessage: err.Error()}, nil
+	}
+	isDirectory := req.IsDirectory
+	if remote, err := s.getGoogleDriveFile(ctx, acc, req.RemoteFolderId); err == nil {
+		isDirectory = remote.MimeType == "application/vnd.google-apps.folder"
 	}
 
 	config := &domain.SyncConfig{

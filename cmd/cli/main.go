@@ -42,6 +42,8 @@ func fuzzyFilter(term string, targets []string) []list.Rank {
 
 var docStyle = lipgloss.NewStyle().Margin(1, 2)
 
+const cliAllowedRootEnv = "INSYNC_ALLOWED_ROOT"
+
 // browseItem representa uma linha na navegação pós-auth; Path no proto = ID remoto no Drive.
 type browseItem struct {
 	title       string
@@ -258,7 +260,7 @@ func (m model) fetchSynced() tea.Cmd {
 			modes[f.Path] = f.Mode
 			if localRoot == "" && f.LocalPath != "" {
 				candidate := filepath.Dir(f.LocalPath)
-				if candidate != "." {
+				if candidate != "." && localRootAllowed(candidate) {
 					localRoot = candidate
 				}
 			}
@@ -291,16 +293,14 @@ func (m model) toggleSyncForSelection(mode insync.SyncMode) (model, tea.Cmd) {
 	m.selectedItems = newSelectedItems
 	m.syncedModes[sel.remoteID] = mode
 	m.refreshVisibleMarkers()
-	if m.lastLocalRoot != "" {
-		if err := os.MkdirAll(m.lastLocalRoot, 0755); err != nil {
-			m.status = "Erro ao criar caminho local: " + err.Error()
-			return m, nil
-		}
-		m.status = fmt.Sprintf("Enviando %d item(ns) ao servidor...", len(m.selectedItems))
-		return m, m.configureSelectedItems(m.lastLocalRoot)
+	localRoot := syncRootForImmediateStart(m.lastLocalRoot)
+	if err := os.MkdirAll(localRoot, 0755); err != nil {
+		m.status = "Erro ao criar caminho local: " + err.Error()
+		return m, nil
 	}
-	m.status = fmt.Sprintf("%d item(ns) selecionado(s). Pressione p para escolher o caminho local.", len(m.selectedItems))
-	return m, nil
+	m.lastLocalRoot = localRoot
+	m.status = fmt.Sprintf("Enviando %d item(ns) ao servidor...", len(m.selectedItems))
+	return m, m.configureSelectedItems(localRoot)
 }
 
 func (m model) unsyncSelected() (model, tea.Cmd) {
@@ -309,17 +309,33 @@ func (m model) unsyncSelected() (model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Verificar se o item está syncado (tanto em syncedModes quanto em selectedItems)
-	_, inSyncedModes := m.syncedModes[sel.remoteID]
-	_, inSelectedItems := m.selectedItems[sel.remoteID]
-
-	if !inSyncedModes && !inSelectedItems {
+	remoteID, title, ok := m.unsyncTarget(sel)
+	if !ok {
 		m.status = "Este item não está sincronizado."
 		return m, nil
 	}
 
-	m.status = fmt.Sprintf("Removendo sync de %s... (apenas local)", sel.title)
-	return m, m.performUnsync(sel.remoteID, sel.title)
+	m.status = fmt.Sprintf("Removendo sync de %s... (apenas local)", title)
+	return m, m.performUnsync(remoteID, title)
+}
+
+func (m model) unsyncTarget(sel browseItem) (remoteID string, title string, ok bool) {
+	if _, ok := m.selectedItems[sel.remoteID]; ok {
+		return sel.remoteID, sel.title, true
+	}
+	if _, ok := m.syncedModes[sel.remoteID]; ok {
+		return sel.remoteID, sel.title, true
+	}
+	for i := len(m.browsePath) - 1; i >= 0; i-- {
+		parentID := m.browsePath[i]
+		if item, ok := m.selectedItems[parentID]; ok {
+			return parentID, item.title, true
+		}
+		if _, ok := m.syncedModes[parentID]; ok {
+			return parentID, sel.title, true
+		}
+	}
+	return "", "", false
 }
 
 func (m *model) performUnsync(remoteID string, title string) tea.Cmd {
@@ -364,12 +380,28 @@ func (m *model) refreshVisibleMarkers() {
 		} else if mode, ok := m.syncedModes[bi.remoteID]; ok {
 			bi.mode = mode
 			bi.hasMode = true
+		} else if mode, ok := m.inheritedBrowseMode(); ok {
+			bi.mode = mode
+			bi.hasMode = true
 		} else {
 			bi.hasMode = false
 		}
 		next = append(next, bi)
 	}
 	m.list.SetItems(next)
+}
+
+func (m model) inheritedBrowseMode() (insync.SyncMode, bool) {
+	for i := len(m.browsePath) - 1; i >= 0; i-- {
+		remoteID := m.browsePath[i]
+		if item, ok := m.selectedItems[remoteID]; ok {
+			return item.mode, true
+		}
+		if mode, ok := m.syncedModes[remoteID]; ok {
+			return mode, true
+		}
+	}
+	return insync.SyncMode_BASE_SYNC, false
 }
 
 func (m model) configureSelectedItems(localRoot string) tea.Cmd {
@@ -428,10 +460,41 @@ func safeLocalName(name string) string {
 }
 
 func defaultSyncRoot() string {
+	if root := strings.TrimSpace(os.Getenv(cliAllowedRootEnv)); root != "" {
+		return filepath.Clean(root)
+	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		return filepath.Join(home, "Insync")
 	}
 	return "./Insync"
+}
+
+func syncRootForImmediateStart(lastLocalRoot string) string {
+	if localRootAllowed(lastLocalRoot) {
+		return filepath.Clean(lastLocalRoot)
+	}
+	return defaultSyncRoot()
+}
+
+func localRootAllowed(localRoot string) bool {
+	localRoot = strings.TrimSpace(localRoot)
+	if localRoot == "" {
+		return false
+	}
+	if strings.TrimSpace(os.Getenv(cliAllowedRootEnv)) == "" {
+		return true
+	}
+	clean, err := filepath.Abs(localRoot)
+	if err != nil {
+		return false
+	}
+	allowed, err := filepath.Abs(defaultSyncRoot())
+	if err != nil {
+		return false
+	}
+	clean = filepath.Clean(clean)
+	allowed = filepath.Clean(allowed)
+	return clean == allowed || strings.HasPrefix(clean, allowed+string(filepath.Separator))
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -509,77 +572,72 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// --- stateBrowsing ---
 		if m.state == stateBrowsing {
-			// Primeiro, tenta processar a tecla na lista (isso inclui o filter)
-			// O bubbles/list vai tratar teclas de navegação/filter e gerar um cmd
-			var cmd tea.Cmd
-			m.list, cmd = m.list.Update(msg)
-
-			// Se a lista gerou um cmd, ela processou a tecla (navegação ou filter)
-			if cmd != nil {
-				return m, cmd
-			}
-
-			// Se a lista não processou, tenta as teclas de ação
-			switch key {
-			case "u":
-				model, cmd := m.unsyncSelected()
-				return model, cmd
-			case "b":
-				model, cmd := m.toggleSyncForSelection(insync.SyncMode_BASE_SYNC)
-				return model, cmd
-			case "f":
-				model, cmd := m.toggleSyncForSelection(insync.SyncMode_FULL_SYNC)
-				return model, cmd
-			case "p":
-				m.state = stateLocalPath
-				if m.lastLocalRoot != "" {
-					m.pathInput.SetValue(m.lastLocalRoot)
-				} else {
-					m.pathInput.SetValue(defaultSyncRoot())
-				}
-				var cmds []tea.Cmd
-				cmds = append(cmds, m.pathInput.Focus())
-				m.status = "Informe a pasta onde os itens selecionados serão sincronizados."
-				var cmd tea.Cmd
-				m.pathInput, cmd = m.pathInput.Update(msg)
-				cmds = append(cmds, cmd)
-				return m, tea.Batch(cmds...)
-			case "enter":
-				sel, ok := m.list.SelectedItem().(browseItem)
-				if !ok {
-					return m, nil
-				}
-				if sel.isBack {
-					if len(m.browsePath) <= 1 {
+			if m.list.FilterState() != list.Filtering {
+				switch key {
+				case "u":
+					model, cmd := m.unsyncSelected()
+					return model, cmd
+				case "b":
+					model, cmd := m.toggleSyncForSelection(insync.SyncMode_BASE_SYNC)
+					return model, cmd
+				case "f":
+					model, cmd := m.toggleSyncForSelection(insync.SyncMode_FULL_SYNC)
+					return model, cmd
+				case "p":
+					m.state = stateLocalPath
+					if m.lastLocalRoot != "" {
+						m.pathInput.SetValue(m.lastLocalRoot)
+					} else {
+						m.pathInput.SetValue(defaultSyncRoot())
+					}
+					var cmds []tea.Cmd
+					cmds = append(cmds, m.pathInput.Focus())
+					m.status = "Informe a pasta onde os itens selecionados serão sincronizados."
+					var cmd tea.Cmd
+					m.pathInput, cmd = m.pathInput.Update(msg)
+					cmds = append(cmds, cmd)
+					return m, tea.Batch(cmds...)
+				case "enter":
+					sel, ok := m.list.SelectedItem().(browseItem)
+					if !ok {
 						return m, nil
 					}
-					m.browsePath = m.browsePath[:len(m.browsePath)-1]
-					parent := m.browsePath[len(m.browsePath)-1]
-					m.status = "Carregando..."
-					return m, m.fetchFiles(parent)
+					if sel.isBack {
+						if len(m.browsePath) <= 1 {
+							return m, nil
+						}
+						m.browsePath = m.browsePath[:len(m.browsePath)-1]
+						parent := m.browsePath[len(m.browsePath)-1]
+						m.status = "Carregando..."
+						return m, m.fetchFiles(parent)
+					}
+					if sel.isDirectory {
+						m.browsePath = append(m.browsePath, sel.remoteID)
+						m.status = "Carregando..."
+						return m, m.fetchFiles(sel.remoteID)
+					}
+					m.status = "Arquivo selecionável com b ou f. Pressione p para escolher o destino local."
+					return m, nil
 				}
-				if sel.isDirectory {
-					m.browsePath = append(m.browsePath, sel.remoteID)
-					m.status = "Carregando..."
-					return m, m.fetchFiles(sel.remoteID)
+
+				// Esc quando NÃO filtrando abre confirmação de saída.
+				if key == "esc" && !m.list.IsFiltered() {
+					m.state = stateConfirmExit
+					m.confirmText = ""
+					m.status = "Sair da sessão? (s/n)"
+					return m, nil
 				}
-				m.status = "Arquivo selecionável com b ou f. Pressione p para escolher o destino local."
-				return m, nil
+
+				// Esc quando filtrando limpa o filtro e fecha o field.
+				if key == "esc" && m.list.IsFiltered() {
+					m.list.ResetFilter()
+					return m, nil
+				}
 			}
 
-			// Esc quando NÃO filtrando → abre confirmação de saída
-			if key == "esc" && !m.list.IsFiltered() {
-				m.state = stateConfirmExit
-				m.confirmText = ""
-				m.status = "Sair da sessão? (s/n)"
-				return m, nil
-			}
-
-			// Esc quando filtrando → limpa o filter e fecha o field
-			if key == "esc" && m.list.IsFiltered() {
-				m.list.ResetFilter()
-				return m, nil
-			}
+			var cmd tea.Cmd
+			m.list, cmd = m.list.Update(msg)
+			return m, cmd
 		}
 
 		// --- stateAuthCode ---
@@ -601,6 +659,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case fileListMsg:
 		var items []list.Item
+		inheritedMode, hasInheritedMode := m.inheritedBrowseMode()
 		if len(m.browsePath) > 1 {
 			items = append(items, browseItem{title: "..", desc: "Voltar", isBack: true})
 		}
@@ -623,6 +682,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if mode, ok := m.syncedModes[f.Path]; ok {
 				bi.mode = mode
 				bi.hasMode = true
+			} else if hasInheritedMode {
+				bi.mode = inheritedMode
+				bi.hasMode = true
 			}
 			items = append(items, bi)
 		}
@@ -636,7 +698,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case syncedListMsg:
 		if msg.modes != nil {
-			m.syncedModes = msg.modes
+			if m.syncedModes == nil {
+				m.syncedModes = make(map[string]insync.SyncMode)
+			}
+			for id, mode := range msg.modes {
+				m.syncedModes[id] = mode
+			}
 		}
 		if msg.localRoot != "" {
 			m.lastLocalRoot = msg.localRoot

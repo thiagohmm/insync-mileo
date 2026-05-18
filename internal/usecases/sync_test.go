@@ -311,6 +311,47 @@ func TestSyncUseCase_SyncFolder_SingleFile_LocalDeleted_BaseSync(t *testing.T) {
 	}
 }
 
+func TestSyncUseCase_SyncFolder_SingleFileInitialDownload(t *testing.T) {
+	repo := domain.NewMockRepository()
+	cloudSvc := domain.NewMockCloudService(domain.GoogleDrive)
+	cloudSvc.Files = []domain.FileMetadata{{
+		Path:        "single-file.txt",
+		ETag:        "remote-file-id",
+		MD5Checksum: "not-used-by-mock-download",
+	}}
+
+	tmpDir := t.TempDir()
+	localPath := filepath.Join(tmpDir, "single-file.txt")
+
+	cfg := &domain.SyncConfig{
+		AccountID:      "acct-1",
+		LocalPath:      localPath,
+		RemoteFolderID: "remote-file-id",
+		Mode:           domain.BaseSync,
+		Provider:       domain.GoogleDrive,
+		IsDirectory:    false,
+	}
+	if err := repo.SaveSyncConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("SaveSyncConfig() error: %v", err)
+	}
+
+	suc := NewSyncUseCase(repo, []domain.CloudService{cloudSvc})
+	if err := suc.SyncFolder(context.Background(), *cfg); err != nil {
+		t.Fatalf("SyncFolder() error: %v", err)
+	}
+
+	if _, err := os.Stat(localPath); err != nil {
+		t.Fatalf("expected local file to be downloaded: %v", err)
+	}
+	meta, err := repo.GetFileMetadata(context.Background(), cfg.ID, "single-file.txt")
+	if err != nil {
+		t.Fatalf("GetFileMetadata() error: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected file metadata after single-file download")
+	}
+}
+
 func TestSyncUseCase_SyncFolder_RemoteError(t *testing.T) {
 	repo := domain.NewMockRepository()
 	cloudSvc := domain.NewMockCloudService(domain.GoogleDrive)

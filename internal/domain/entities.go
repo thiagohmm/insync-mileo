@@ -94,6 +94,75 @@ type FileMetadata struct {
 	MD5Checksum string
 }
 
+// FileDeduplicationKey represents a key for deduplicating files by content
+type FileDeduplicationKey struct {
+	MD5Checksum string
+	Size        int64
+}
+
+type SyncPriority int
+
+const (
+	LowPriority      SyncPriority = iota // 0
+	NormalPriority                       // 1
+	HighPriority                         // 2
+	CriticalPriority                     // 3
+)
+
+type SyncTask struct {
+	ID           int64
+	SyncConfigID int64
+	FilePath     string
+	RemoteID     string
+	FileSize     int64
+	TaskType     SyncTaskType
+	Priority     SyncPriority
+	Status       SyncTaskStatus
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	Error        string
+}
+
+type SyncTaskType int
+
+const (
+	DownloadTask SyncTaskType = iota
+	UploadTask
+	DeleteLocalTask
+	DeleteRemoteTask
+	VerifyChecksumTask
+)
+
+type SyncTaskStatus int
+
+const (
+	TaskPending SyncTaskStatus = iota
+	TaskRunning
+	TaskCompleted
+	TaskFailed
+	TaskCancelled
+)
+
+// WebhookConfig represents configuration for cloud webhooks
+type WebhookConfig struct {
+	ID           int64
+	SyncConfigID int64
+	ChannelID    string
+	ResourceID   string
+	Expiration   time.Time
+	EventType    string // e.g., "push_notification", "webhook"
+}
+
+// PushNotification represents a webhook notification from cloud provider
+type PushNotification struct {
+	ResourceID string
+	ChannelID  string
+	Expiration time.Time
+	Changed    string // Changed resource ID (file/folder ID)
+	State      string // Current state of the resource
+	AuthError  bool   // Whether authentication error occurred
+}
+
 type SyncStatus struct {
 	FilePath           string
 	Status             string

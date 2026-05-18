@@ -143,11 +143,7 @@ func constantTimeEqual(got string, want string) bool {
 func allowedSyncRoot() (string, error) {
 	root := strings.TrimSpace(os.Getenv(allowedRootEnv))
 	if root == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("resolve home directory: %w", err)
-		}
-		root = filepath.Join(home, "Insync")
+		return "", nil
 	}
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -170,10 +166,14 @@ func validatedLocalSyncPath(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if clean != root && !strings.HasPrefix(clean, root+string(filepath.Separator)) {
-		return "", fmt.Errorf("local_path deve ficar dentro de %s", root)
-	}
-	if err := ensureResolvedPathStaysInRoot(clean, root); err != nil {
+	if root != "" {
+		if clean != root && !strings.HasPrefix(clean, root+string(filepath.Separator)) {
+			return "", fmt.Errorf("local_path deve ficar dentro de %s", root)
+		}
+		if err := ensureResolvedPathStaysInRoot(clean, root); err != nil {
+			return "", err
+		}
+	} else if err := ensurePathHasNoUnsafeSymlink(clean); err != nil {
 		return "", err
 	}
 	return clean, nil

@@ -154,6 +154,14 @@ func (g *googleDriveService) DeleteFile(ctx context.Context, remoteFileID string
 	return g.service.Files.Delete(remoteFileID).Do()
 }
 
+func (g *googleDriveService) GetFileChecksum(ctx context.Context, remoteFileID string) (string, error) {
+	file, err := g.service.Files.Get(remoteFileID).Fields("md5Checksum").Context(ctx).Do()
+	if err != nil {
+		return "", err
+	}
+	return file.Md5Checksum, nil
+}
+
 func driveParentQuery(folderID string) string {
 	return fmt.Sprintf("'%s' in parents and trashed = false", escapeDriveQueryString(folderID))
 }
