@@ -26,6 +26,8 @@ const (
 	InsyncService_GetSyncStatus_FullMethodName   = "/insync.InsyncService/GetSyncStatus"
 	InsyncService_ListFiles_FullMethodName       = "/insync.InsyncService/ListFiles"
 	InsyncService_ListSyncedFiles_FullMethodName = "/insync.InsyncService/ListSyncedFiles"
+	InsyncService_ConfigureProxy_FullMethodName  = "/insync.InsyncService/ConfigureProxy"
+	InsyncService_GetProxyConfig_FullMethodName  = "/insync.InsyncService/GetProxyConfig"
 )
 
 // InsyncServiceClient is the client API for InsyncService service.
@@ -42,6 +44,9 @@ type InsyncServiceClient interface {
 	// Listagem de arquivos
 	ListFiles(ctx context.Context, in *ListFilesRequest, opts ...grpc.CallOption) (*ListFilesResponse, error)
 	ListSyncedFiles(ctx context.Context, in *ListSyncedFilesRequest, opts ...grpc.CallOption) (*ListSyncedFilesResponse, error)
+	// Proxy configuration
+	ConfigureProxy(ctx context.Context, in *ConfigureProxyRequest, opts ...grpc.CallOption) (*ConfigureProxyResponse, error)
+	GetProxyConfig(ctx context.Context, in *GetProxyConfigRequest, opts ...grpc.CallOption) (*GetProxyConfigResponse, error)
 }
 
 type insyncServiceClient struct {
@@ -131,6 +136,26 @@ func (c *insyncServiceClient) ListSyncedFiles(ctx context.Context, in *ListSynce
 	return out, nil
 }
 
+func (c *insyncServiceClient) ConfigureProxy(ctx context.Context, in *ConfigureProxyRequest, opts ...grpc.CallOption) (*ConfigureProxyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ConfigureProxyResponse)
+	err := c.cc.Invoke(ctx, InsyncService_ConfigureProxy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *insyncServiceClient) GetProxyConfig(ctx context.Context, in *GetProxyConfigRequest, opts ...grpc.CallOption) (*GetProxyConfigResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetProxyConfigResponse)
+	err := c.cc.Invoke(ctx, InsyncService_GetProxyConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // InsyncServiceServer is the server API for InsyncService service.
 // All implementations must embed UnimplementedInsyncServiceServer
 // for forward compatibility.
@@ -145,6 +170,9 @@ type InsyncServiceServer interface {
 	// Listagem de arquivos
 	ListFiles(context.Context, *ListFilesRequest) (*ListFilesResponse, error)
 	ListSyncedFiles(context.Context, *ListSyncedFilesRequest) (*ListSyncedFilesResponse, error)
+	// Proxy configuration
+	ConfigureProxy(context.Context, *ConfigureProxyRequest) (*ConfigureProxyResponse, error)
+	GetProxyConfig(context.Context, *GetProxyConfigRequest) (*GetProxyConfigResponse, error)
 	mustEmbedUnimplementedInsyncServiceServer()
 }
 
@@ -175,6 +203,12 @@ func (UnimplementedInsyncServiceServer) ListFiles(context.Context, *ListFilesReq
 }
 func (UnimplementedInsyncServiceServer) ListSyncedFiles(context.Context, *ListSyncedFilesRequest) (*ListSyncedFilesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListSyncedFiles not implemented")
+}
+func (UnimplementedInsyncServiceServer) ConfigureProxy(context.Context, *ConfigureProxyRequest) (*ConfigureProxyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ConfigureProxy not implemented")
+}
+func (UnimplementedInsyncServiceServer) GetProxyConfig(context.Context, *GetProxyConfigRequest) (*GetProxyConfigResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetProxyConfig not implemented")
 }
 func (UnimplementedInsyncServiceServer) mustEmbedUnimplementedInsyncServiceServer() {}
 func (UnimplementedInsyncServiceServer) testEmbeddedByValue()                       {}
@@ -316,6 +350,42 @@ func _InsyncService_ListSyncedFiles_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _InsyncService_ConfigureProxy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ConfigureProxyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(InsyncServiceServer).ConfigureProxy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: InsyncService_ConfigureProxy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(InsyncServiceServer).ConfigureProxy(ctx, req.(*ConfigureProxyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _InsyncService_GetProxyConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetProxyConfigRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(InsyncServiceServer).GetProxyConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: InsyncService_GetProxyConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(InsyncServiceServer).GetProxyConfig(ctx, req.(*GetProxyConfigRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // InsyncService_ServiceDesc is the grpc.ServiceDesc for InsyncService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -346,6 +416,14 @@ var InsyncService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListSyncedFiles",
 			Handler:    _InsyncService_ListSyncedFiles_Handler,
+		},
+		{
+			MethodName: "ConfigureProxy",
+			Handler:    _InsyncService_ConfigureProxy_Handler,
+		},
+		{
+			MethodName: "GetProxyConfig",
+			Handler:    _InsyncService_GetProxyConfig_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -92,6 +92,9 @@ type FileMetadata struct {
 	// MD5Checksum is the hex-encoded MD5 hash reported by the cloud provider.
 	// Used to verify download integrity.
 	MD5Checksum string
+	// MimeType is the MIME type of the file as reported by the cloud provider.
+	// Used to determine if a file is a Google Docs file requiring export.
+	MimeType string
 }
 
 // FileDeduplicationKey represents a key for deduplicating files by content
@@ -170,4 +173,14 @@ type SyncStatus struct {
 	TotalSize          int64
 	ProcessedSize      int64
 	Provider           Provider
+}
+
+// ProxyConfig holds HTTP proxy settings for routing Drive API requests
+type ProxyConfig struct {
+	ID       int64
+	Host     string
+	Port     int
+	User     string
+	Password string
+	Enabled  bool
 }

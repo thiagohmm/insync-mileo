@@ -36,6 +36,10 @@ type Repository interface {
 	GetWebhookConfig(ctx context.Context, syncConfigID int64) (*WebhookConfig, error)
 	ListWebhookConfigs(ctx context.Context) ([]WebhookConfig, error)
 	DeleteWebhookConfig(ctx context.Context, id int64) error
+
+	// Proxy methods
+	SaveProxyConfig(ctx context.Context, config *ProxyConfig) error
+	GetProxyConfig(ctx context.Context) (*ProxyConfig, error)
 }
 
 type CloudService interface {
@@ -45,8 +49,9 @@ type CloudService interface {
 	DownloadFile(ctx context.Context, remoteFileID string, localPath string) error
 	DownloadFileWithProgress(ctx context.Context, remoteFileID string, localPath string, onProgress func(downloaded, total int64)) error
 	DeleteFile(ctx context.Context, remoteFileID string) error
-	// Checksum methods
+	// Checksum and metadata methods
 	GetFileChecksum(ctx context.Context, remoteFileID string) (string, error)
+	GetFileMimeType(ctx context.Context, remoteFileID string) (string, error)
 }
 
 type WebhookHandler interface {

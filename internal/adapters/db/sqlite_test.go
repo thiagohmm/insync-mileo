@@ -617,3 +617,211 @@ func TestSQLiteRepository_EmptyListSyncConfigs(t *testing.T) {
 		t.Errorf("expected 0 configs, got %d", len(configs))
 	}
 }
+
+func TestSQLiteRepository_GetProxyConfig_NotFound(t *testing.T) {
+	repo, cleanup := newTestDB(t)
+	defer cleanup()
+
+	got, err := repo.GetProxyConfig(context.Background())
+	if err != nil {
+		t.Fatalf("GetProxyConfig() error: %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil for non-existent proxy config, got %v", got)
+	}
+}
+
+func TestSQLiteRepository_SaveAndGetProxyConfig(t *testing.T) {
+	repo, cleanup := newTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	cfg := &domain.ProxyConfig{
+		Host:     "proxy.example.com",
+		Port:     8080,
+		User:     "testuser",
+		Password: "testpass",
+		Enabled:  true,
+	}
+
+	if err := repo.SaveProxyConfig(ctx, cfg); err != nil {
+		t.Fatalf("SaveProxyConfig() error: %v", err)
+	}
+
+	got, err := repo.GetProxyConfig(ctx)
+	if err != nil {
+		t.Fatalf("GetProxyConfig() error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("GetProxyConfig() returned nil")
+	}
+	if got.Host != cfg.Host {
+		t.Errorf("Host = %s, want %s", got.Host, cfg.Host)
+	}
+	if got.Port != cfg.Port {
+		t.Errorf("Port = %d, want %d", got.Port, cfg.Port)
+	}
+	if got.User != cfg.User {
+		t.Errorf("User = %s, want %s", got.User, cfg.User)
+	}
+	if got.Password != cfg.Password {
+		t.Errorf("Password = %s, want %s", got.Password, cfg.Password)
+	}
+	if got.Enabled != cfg.Enabled {
+		t.Errorf("Enabled = %v, want %v", got.Enabled, cfg.Enabled)
+	}
+}
+
+func TestSQLiteRepository_SaveProxyConfig_ReplacesExisting(t *testing.T) {
+	repo, cleanup := newTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	cfg1 := &domain.ProxyConfig{
+		Host:    "proxy1.com",
+		Port:    8080,
+		Enabled: true,
+	}
+
+	if err := repo.SaveProxyConfig(ctx, cfg1); err != nil {
+		t.Fatalf("initial save error: %v", err)
+	}
+
+	cfg2 := &domain.ProxyConfig{
+		Host:    "proxy2.com",
+		Port:    9090,
+		User:    "newuser",
+		Enabled: false,
+	}
+
+	if err := repo.SaveProxyConfig(ctx, cfg2); err != nil {
+		t.Fatalf("replace error: %v", err)
+	}
+
+	got, err := repo.GetProxyConfig(ctx)
+	if err != nil {
+		t.Fatalf("GetProxyConfig() error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected proxy config, got nil")
+	}
+	if got.Host != "proxy2.com" {
+		t.Errorf("Host = %s, want proxy2.com", got.Host)
+	}
+	if got.Port != 9090 {
+		t.Errorf("Port = %d, want 9090", got.Port)
+	}
+	if got.User != "newuser" {
+		t.Errorf("User = %s, want newuser", got.User)
+	}
+	if got.Enabled {
+		t.Error("Enabled = true, want false")
+	}
+}
+
+func TestSQLiteRepository_SaveProxyConfig_Disabled(t *testing.T) {
+	repo, cleanup := newTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	cfg := &domain.ProxyConfig{
+		Host:    "proxy.example.com",
+		Port:    3128,
+		Enabled: false,
+	}
+
+	if err := repo.SaveProxyConfig(ctx, cfg); err != nil {
+		t.Fatalf("SaveProxyConfig() error: %v", err)
+	}
+
+	got, err := repo.GetProxyConfig(ctx)
+	if err != nil {
+		t.Fatalf("GetProxyConfig() error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected proxy config, got nil")
+	}
+	if got.Enabled {
+		t.Error("Enabled = true, want false")
+	}
+}
+
+func TestSQLiteRepository_SaveProxyConfig_EmptyValues(t *testing.T) {
+	repo, cleanup := newTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	cfg := &domain.ProxyConfig{
+		Host:    "",
+		Port:    0,
+		User:    "",
+		Password: "",
+		Enabled: false,
+	}
+
+	if err := repo.SaveProxyConfig(ctx, cfg); err != nil {
+		t.Fatalf("SaveProxyConfig() error: %v", err)
+	}
+
+	got, err := repo.GetProxyConfig(ctx)
+	if err != nil {
+		t.Fatalf("GetProxyConfig() error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected proxy config, got nil")
+	}
+	if got.Host != "" {
+		t.Errorf("Host = %q, want empty", got.Host)
+	}
+	if got.Port != 0 {
+		t.Errorf("Port = %d, want 0", got.Port)
+	}
+}
+
+func TestSQLiteRepository_ProxyConfig_ConcurrentAccess(t *testing.T) {
+	repo, cleanup := newTestDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	numberOfGoroutines := 10
+
+	// Concurrent saves
+	wg.Add(numberOfGoroutines)
+	for i := 0; i < numberOfGoroutines; i++ {
+		go func(i int) {
+			defer wg.Done()
+			cfg := &domain.ProxyConfig{
+				Host:    fmt.Sprintf("proxy-%d.com", i),
+				Port:    8000 + i,
+				Enabled: i%2 == 0,
+			}
+			if err := repo.SaveProxyConfig(ctx, cfg); err != nil {
+				t.Errorf("concurrent SaveProxyConfig(%d) error: %v", i, err)
+			}
+		}(i)
+	}
+
+	// Concurrent reads
+	wg.Add(numberOfGoroutines)
+	for i := 0; i < numberOfGoroutines; i++ {
+		go func() {
+			defer wg.Done()
+			if _, err := repo.GetProxyConfig(ctx); err != nil {
+				t.Errorf("concurrent GetProxyConfig error: %v", err)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Final state should be consistent
+	got, err := repo.GetProxyConfig(ctx)
+	if err != nil {
+		t.Fatalf("GetProxyConfig() error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected proxy config after concurrent saves, got nil")
+	}
+}

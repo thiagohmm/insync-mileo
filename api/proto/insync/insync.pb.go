@@ -933,6 +933,262 @@ func (x *UnsyncResponse) GetErrorMessage() string {
 	return ""
 }
 
+type ConfigureProxyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Host          string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`
+	Port          int32                  `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
+	User          string                 `protobuf:"bytes,3,opt,name=user,proto3" json:"user,omitempty"`
+	Password      string                 `protobuf:"bytes,4,opt,name=password,proto3" json:"password,omitempty"`
+	Enabled       bool                   `protobuf:"varint,5,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConfigureProxyRequest) Reset() {
+	*x = ConfigureProxyRequest{}
+	mi := &file_api_proto_insync_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigureProxyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigureProxyRequest) ProtoMessage() {}
+
+func (x *ConfigureProxyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_insync_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConfigureProxyRequest.ProtoReflect.Descriptor instead.
+func (*ConfigureProxyRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_insync_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ConfigureProxyRequest) GetHost() string {
+	if x != nil {
+		return x.Host
+	}
+	return ""
+}
+
+func (x *ConfigureProxyRequest) GetPort() int32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+func (x *ConfigureProxyRequest) GetUser() string {
+	if x != nil {
+		return x.User
+	}
+	return ""
+}
+
+func (x *ConfigureProxyRequest) GetPassword() string {
+	if x != nil {
+		return x.Password
+	}
+	return ""
+}
+
+func (x *ConfigureProxyRequest) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+type ConfigureProxyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	ErrorMessage  string                 `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConfigureProxyResponse) Reset() {
+	*x = ConfigureProxyResponse{}
+	mi := &file_api_proto_insync_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigureProxyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigureProxyResponse) ProtoMessage() {}
+
+func (x *ConfigureProxyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_insync_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConfigureProxyResponse.ProtoReflect.Descriptor instead.
+func (*ConfigureProxyResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_insync_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *ConfigureProxyResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *ConfigureProxyResponse) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
+}
+
+type GetProxyConfigRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetProxyConfigRequest) Reset() {
+	*x = GetProxyConfigRequest{}
+	mi := &file_api_proto_insync_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetProxyConfigRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetProxyConfigRequest) ProtoMessage() {}
+
+func (x *GetProxyConfigRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_insync_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetProxyConfigRequest.ProtoReflect.Descriptor instead.
+func (*GetProxyConfigRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_insync_proto_rawDescGZIP(), []int{18}
+}
+
+type GetProxyConfigResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Success        bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	ErrorMessage   string                 `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	Host           string                 `protobuf:"bytes,3,opt,name=host,proto3" json:"host,omitempty"`
+	Port           int32                  `protobuf:"varint,4,opt,name=port,proto3" json:"port,omitempty"`
+	User           string                 `protobuf:"bytes,5,opt,name=user,proto3" json:"user,omitempty"`
+	PasswordMasked string                 `protobuf:"bytes,6,opt,name=password_masked,json=passwordMasked,proto3" json:"password_masked,omitempty"`
+	Enabled        bool                   `protobuf:"varint,7,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *GetProxyConfigResponse) Reset() {
+	*x = GetProxyConfigResponse{}
+	mi := &file_api_proto_insync_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetProxyConfigResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetProxyConfigResponse) ProtoMessage() {}
+
+func (x *GetProxyConfigResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_insync_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetProxyConfigResponse.ProtoReflect.Descriptor instead.
+func (*GetProxyConfigResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_insync_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *GetProxyConfigResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *GetProxyConfigResponse) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
+}
+
+func (x *GetProxyConfigResponse) GetHost() string {
+	if x != nil {
+		return x.Host
+	}
+	return ""
+}
+
+func (x *GetProxyConfigResponse) GetPort() int32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+func (x *GetProxyConfigResponse) GetUser() string {
+	if x != nil {
+		return x.User
+	}
+	return ""
+}
+
+func (x *GetProxyConfigResponse) GetPasswordMasked() string {
+	if x != nil {
+		return x.PasswordMasked
+	}
+	return ""
+}
+
+func (x *GetProxyConfigResponse) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
 var File_api_proto_insync_proto protoreflect.FileDescriptor
 
 const file_api_proto_insync_proto_rawDesc = "" +
@@ -999,10 +1255,28 @@ const file_api_proto_insync_proto_rawDesc = "" +
 	"\x10remote_folder_id\x18\x02 \x01(\tR\x0eremoteFolderId\"O\n" +
 	"\x0eUnsyncResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
-	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage*(\n" +
+	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\"\x89\x01\n" +
+	"\x15ConfigureProxyRequest\x12\x12\n" +
+	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
+	"\x04port\x18\x02 \x01(\x05R\x04port\x12\x12\n" +
+	"\x04user\x18\x03 \x01(\tR\x04user\x12\x1a\n" +
+	"\bpassword\x18\x04 \x01(\tR\bpassword\x12\x18\n" +
+	"\aenabled\x18\x05 \x01(\bR\aenabled\"W\n" +
+	"\x16ConfigureProxyResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
+	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\"\x17\n" +
+	"\x15GetProxyConfigRequest\"\xd6\x01\n" +
+	"\x16GetProxyConfigResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
+	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12\x12\n" +
+	"\x04host\x18\x03 \x01(\tR\x04host\x12\x12\n" +
+	"\x04port\x18\x04 \x01(\x05R\x04port\x12\x12\n" +
+	"\x04user\x18\x05 \x01(\tR\x04user\x12'\n" +
+	"\x0fpassword_masked\x18\x06 \x01(\tR\x0epasswordMasked\x12\x18\n" +
+	"\aenabled\x18\a \x01(\bR\aenabled*(\n" +
 	"\bSyncMode\x12\r\n" +
 	"\tBASE_SYNC\x10\x00\x12\r\n" +
-	"\tFULL_SYNC\x10\x012\x80\x04\n" +
+	"\tFULL_SYNC\x10\x012\xa2\x05\n" +
 	"\rInsyncService\x12C\n" +
 	"\n" +
 	"GetAuthURL\x12\x19.insync.GetAuthURLRequest\x1a\x1a.insync.GetAuthURLResponse\x12C\n" +
@@ -1012,7 +1286,9 @@ const file_api_proto_insync_proto_rawDesc = "" +
 	"\x06Unsync\x12\x15.insync.UnsyncRequest\x1a\x16.insync.UnsyncResponse\x12H\n" +
 	"\rGetSyncStatus\x12\x19.insync.SyncStatusRequest\x1a\x1a.insync.SyncStatusResponse0\x01\x12@\n" +
 	"\tListFiles\x12\x18.insync.ListFilesRequest\x1a\x19.insync.ListFilesResponse\x12R\n" +
-	"\x0fListSyncedFiles\x12\x1e.insync.ListSyncedFilesRequest\x1a\x1f.insync.ListSyncedFilesResponseB4Z2github.com/thiagohmm/insync-clone/api/proto/insyncb\x06proto3"
+	"\x0fListSyncedFiles\x12\x1e.insync.ListSyncedFilesRequest\x1a\x1f.insync.ListSyncedFilesResponse\x12O\n" +
+	"\x0eConfigureProxy\x12\x1d.insync.ConfigureProxyRequest\x1a\x1e.insync.ConfigureProxyResponse\x12O\n" +
+	"\x0eGetProxyConfig\x12\x1d.insync.GetProxyConfigRequest\x1a\x1e.insync.GetProxyConfigResponseB4Z2github.com/thiagohmm/insync-clone/api/proto/insyncb\x06proto3"
 
 var (
 	file_api_proto_insync_proto_rawDescOnce sync.Once
@@ -1027,7 +1303,7 @@ func file_api_proto_insync_proto_rawDescGZIP() []byte {
 }
 
 var file_api_proto_insync_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_api_proto_insync_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_api_proto_insync_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_api_proto_insync_proto_goTypes = []any{
 	(SyncMode)(0),                   // 0: insync.SyncMode
 	(*GetAuthURLRequest)(nil),       // 1: insync.GetAuthURLRequest
@@ -1046,6 +1322,10 @@ var file_api_proto_insync_proto_goTypes = []any{
 	(*ListSyncedFilesResponse)(nil), // 14: insync.ListSyncedFilesResponse
 	(*UnsyncRequest)(nil),           // 15: insync.UnsyncRequest
 	(*UnsyncResponse)(nil),          // 16: insync.UnsyncResponse
+	(*ConfigureProxyRequest)(nil),   // 17: insync.ConfigureProxyRequest
+	(*ConfigureProxyResponse)(nil),  // 18: insync.ConfigureProxyResponse
+	(*GetProxyConfigRequest)(nil),   // 19: insync.GetProxyConfigRequest
+	(*GetProxyConfigResponse)(nil),  // 20: insync.GetProxyConfigResponse
 }
 var file_api_proto_insync_proto_depIdxs = []int32{
 	0,  // 0: insync.ConfigureSyncRequest.mode:type_name -> insync.SyncMode
@@ -1059,15 +1339,19 @@ var file_api_proto_insync_proto_depIdxs = []int32{
 	7,  // 8: insync.InsyncService.GetSyncStatus:input_type -> insync.SyncStatusRequest
 	9,  // 9: insync.InsyncService.ListFiles:input_type -> insync.ListFilesRequest
 	13, // 10: insync.InsyncService.ListSyncedFiles:input_type -> insync.ListSyncedFilesRequest
-	2,  // 11: insync.InsyncService.GetAuthURL:output_type -> insync.GetAuthURLResponse
-	4,  // 12: insync.InsyncService.AddAccount:output_type -> insync.AddAccountResponse
-	6,  // 13: insync.InsyncService.ConfigureSync:output_type -> insync.ConfigureSyncResponse
-	16, // 14: insync.InsyncService.Unsync:output_type -> insync.UnsyncResponse
-	8,  // 15: insync.InsyncService.GetSyncStatus:output_type -> insync.SyncStatusResponse
-	11, // 16: insync.InsyncService.ListFiles:output_type -> insync.ListFilesResponse
-	14, // 17: insync.InsyncService.ListSyncedFiles:output_type -> insync.ListSyncedFilesResponse
-	11, // [11:18] is the sub-list for method output_type
-	4,  // [4:11] is the sub-list for method input_type
+	17, // 11: insync.InsyncService.ConfigureProxy:input_type -> insync.ConfigureProxyRequest
+	19, // 12: insync.InsyncService.GetProxyConfig:input_type -> insync.GetProxyConfigRequest
+	2,  // 13: insync.InsyncService.GetAuthURL:output_type -> insync.GetAuthURLResponse
+	4,  // 14: insync.InsyncService.AddAccount:output_type -> insync.AddAccountResponse
+	6,  // 15: insync.InsyncService.ConfigureSync:output_type -> insync.ConfigureSyncResponse
+	16, // 16: insync.InsyncService.Unsync:output_type -> insync.UnsyncResponse
+	8,  // 17: insync.InsyncService.GetSyncStatus:output_type -> insync.SyncStatusResponse
+	11, // 18: insync.InsyncService.ListFiles:output_type -> insync.ListFilesResponse
+	14, // 19: insync.InsyncService.ListSyncedFiles:output_type -> insync.ListSyncedFilesResponse
+	18, // 20: insync.InsyncService.ConfigureProxy:output_type -> insync.ConfigureProxyResponse
+	20, // 21: insync.InsyncService.GetProxyConfig:output_type -> insync.GetProxyConfigResponse
+	13, // [13:22] is the sub-list for method output_type
+	4,  // [4:13] is the sub-list for method input_type
 	4,  // [4:4] is the sub-list for extension type_name
 	4,  // [4:4] is the sub-list for extension extendee
 	0,  // [0:4] is the sub-list for field type_name
@@ -1084,7 +1368,7 @@ func file_api_proto_insync_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_insync_proto_rawDesc), len(file_api_proto_insync_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   16,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -34,6 +34,8 @@ type Server struct {
 	statusCh    chan *insync.SyncStatusResponse
 	authMu      sync.Mutex
 	oauthState  string
+	proxyMu     sync.RWMutex
+	proxyURL    *url.URL
 }
 
 func NewServer(syncUseCase domain.SyncUseCase, repo domain.Repository) *Server {
@@ -43,7 +45,41 @@ func NewServer(syncUseCase domain.SyncUseCase, repo domain.Repository) *Server {
 		statusCh:    make(chan *insync.SyncStatusResponse, 100),
 	}
 	go s.forwardUseCaseStatuses()
+	go s.loadProxyConfig()
 	return s
+}
+
+func (s *Server) loadProxyConfig() {
+	cfg, err := s.repo.GetProxyConfig(context.Background())
+	if err != nil || cfg == nil || !cfg.Enabled {
+		return
+	}
+	u, err := url.Parse(fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port))
+	if err != nil {
+		return
+	}
+	if cfg.User != "" {
+		u.User = url.UserPassword(cfg.User, cfg.Password)
+	}
+	s.proxyMu.Lock()
+	s.proxyURL = u
+	s.proxyMu.Unlock()
+}
+
+func (s *Server) getProxyURL() *url.URL {
+	s.proxyMu.RLock()
+	defer s.proxyMu.RUnlock()
+	return s.proxyURL
+}
+
+// proxyRoundTripper returns an http.RoundTripper that routes through the configured proxy
+func (s *Server) proxyRoundTripper() *http.Transport {
+	proxy := s.getProxyURL()
+	t := &http.Transport{}
+	if proxy != nil {
+		t.Proxy = http.ProxyURL(proxy)
+	}
+	return t
 }
 
 func (s *Server) forwardUseCaseStatuses() {
@@ -268,6 +304,60 @@ func googleOAuthConfig() *oauth2.Config {
 	return cfg
 }
 
+func (s *Server) ConfigureProxy(ctx context.Context, req *insync.ConfigureProxyRequest) (*insync.ConfigureProxyResponse, error) {
+	cfg := &domain.ProxyConfig{
+		Host:     req.Host,
+		Port:     int(req.Port),
+		User:     req.User,
+		Password: req.Password,
+		Enabled:  req.Enabled,
+	}
+	if err := s.repo.SaveProxyConfig(ctx, cfg); err != nil {
+		return &insync.ConfigureProxyResponse{Success: false, ErrorMessage: err.Error()}, nil
+	}
+
+	if cfg.Enabled {
+		u, err := url.Parse(fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port))
+		if err != nil {
+			return &insync.ConfigureProxyResponse{Success: false, ErrorMessage: fmt.Sprintf("invalid proxy URL: %v", err)}, nil
+		}
+		if cfg.User != "" {
+			u.User = url.UserPassword(cfg.User, cfg.Password)
+		}
+		s.proxyMu.Lock()
+		s.proxyURL = u
+		s.proxyMu.Unlock()
+	} else {
+		s.proxyMu.Lock()
+		s.proxyURL = nil
+		s.proxyMu.Unlock()
+	}
+
+	return &insync.ConfigureProxyResponse{Success: true}, nil
+}
+
+func (s *Server) GetProxyConfig(ctx context.Context, req *insync.GetProxyConfigRequest) (*insync.GetProxyConfigResponse, error) {
+	cfg, err := s.repo.GetProxyConfig(ctx)
+	if err != nil {
+		return &insync.GetProxyConfigResponse{Success: false, ErrorMessage: err.Error()}, nil
+	}
+	if cfg == nil {
+		return &insync.GetProxyConfigResponse{Success: true}, nil
+	}
+	masked := ""
+	if len(cfg.Password) > 0 {
+		masked = strings.Repeat("*", len(cfg.Password))
+	}
+	return &insync.GetProxyConfigResponse{
+		Success:        true,
+		Host:           cfg.Host,
+		Port:           int32(cfg.Port),
+		User:           cfg.User,
+		PasswordMasked: masked,
+		Enabled:        cfg.Enabled,
+	}, nil
+}
+
 // refreshAndRetry attempts an operation with automatic token refresh on expiration.
 // The Go oauth2 package's Client auto-refreshes when the token is near expiry,
 // but it can still return "token expired" errors. This function catches that case,
@@ -282,6 +372,9 @@ func (s *Server) refreshAndRetry(ctx context.Context, acc *domain.Account, opera
 
 	// Attempt 1: use the current token (oauth2.Client auto-refreshes if near expiry)
 	httpClient := cfg.Client(ctx, tok)
+	if pt := s.proxyRoundTripper(); pt != nil {
+		httpClient.Transport = pt
+	}
 	ctxWithHTTPClient := context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 	if opErr := operation(ctxWithHTTPClient, tok); opErr != nil {
 		// First attempt failed — force a token refresh via refresh_token
@@ -307,6 +400,9 @@ func (s *Server) refreshAndRetry(ctx context.Context, acc *domain.Account, opera
 
 		// Attempt 2: retry with the refreshed token
 		refreshedHTTPClient := cfg.Client(ctx, newTok)
+		if pt := s.proxyRoundTripper(); pt != nil {
+			refreshedHTTPClient.Transport = pt
+		}
 		refreshedCtx := context.WithValue(ctx, oauth2.HTTPClient, refreshedHTTPClient)
 		return operation(refreshedCtx, newTok)
 	}
@@ -324,6 +420,9 @@ func (s *Server) isTokenValid(ctx context.Context, acc *domain.Account) bool {
 	}
 
 	httpClient := cfg.Client(ctx, tok)
+	if pt := s.proxyRoundTripper(); pt != nil {
+		httpClient.Transport = pt
+	}
 	driveSvc, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
 		fmt.Printf("[DEBUG] isTokenValid - Erro ao criar Drive service: %v\n", err)
@@ -349,6 +448,9 @@ func (s *Server) listGoogleDriveFolder(ctx context.Context, acc *domain.Account,
 		}
 		cfg := googleOAuthConfig()
 		httpClient := cfg.Client(ctx, tok)
+		if pt := s.proxyRoundTripper(); pt != nil {
+			httpClient.Transport = pt
+		}
 		driveSvc, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 		if err != nil {
 			return err
@@ -419,6 +521,9 @@ func (s *Server) getGoogleDriveFile(ctx context.Context, acc *domain.Account, fi
 	err := s.refreshAndRetry(ctx, acc, func(ctx context.Context, tok *oauth2.Token) error {
 		cfg := googleOAuthConfig()
 		httpClient := cfg.Client(ctx, tok)
+		if pt := s.proxyRoundTripper(); pt != nil {
+			httpClient.Transport = pt
+		}
 		driveSvc, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 		if err != nil {
 			return err
@@ -442,6 +547,9 @@ func (s *Server) googleDriveService(ctx context.Context, acc *domain.Account) (*
 	}
 
 	httpClient := cfg.Client(ctx, tok)
+	if pt := s.proxyRoundTripper(); pt != nil {
+		httpClient.Transport = pt
+	}
 	return drive.NewService(ctx, option.WithHTTPClient(httpClient))
 }
 
@@ -452,6 +560,9 @@ func (s *Server) startGoogleDriveInitialSync(ctx context.Context, acc *domain.Ac
 	err = s.refreshAndRetry(ctx, acc, func(ctx context.Context, tok *oauth2.Token) error {
 		cfg := googleOAuthConfig()
 		httpClient := cfg.Client(ctx, tok)
+		if pt := s.proxyRoundTripper(); pt != nil {
+			httpClient.Transport = pt
+		}
 		driveSvc, err = drive.NewService(ctx, option.WithHTTPClient(httpClient))
 		return err
 	})
@@ -543,13 +654,13 @@ func (s *Server) downloadGoogleDriveFile(ctx context.Context, driveSvc *drive.Se
 
 	var body io.ReadCloser
 	if strings.HasPrefix(meta.MimeType, "application/vnd.google-apps.") {
-		exportMime := googleExportMime(meta.MimeType)
+		exportMime := cloud.GoogleExportMime(meta.MimeType)
 		res, err := driveSvc.Files.Export(fileID, exportMime).Download()
 		if err != nil {
 			return err
 		}
 		body = res.Body
-		localPath = ensureExportExtension(localPath, exportMime)
+		localPath = cloud.EnsureExportExtension(localPath, exportMime)
 	} else {
 		res, err := driveSvc.Files.Get(fileID).Download()
 		if err != nil {
@@ -633,31 +744,6 @@ func (s *Server) verifyLocalMD5(localPath, expectedHex string) error {
 		return fmt.Errorf("MD5 mismatch: got %s, want %s", got, expectedHex)
 	}
 	return nil
-}
-
-func googleExportMime(mimeType string) string {
-	switch mimeType {
-	case "application/vnd.google-apps.spreadsheet":
-		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-	case "application/vnd.google-apps.presentation":
-		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-	default:
-		return "application/pdf"
-	}
-}
-
-func ensureExportExtension(path string, exportMime string) string {
-	if filepath.Ext(path) != "" {
-		return path
-	}
-	switch exportMime {
-	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-		return path + ".xlsx"
-	case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
-		return path + ".pptx"
-	default:
-		return path + ".pdf"
-	}
 }
 
 func (s *Server) validOAuthState(state string) bool {

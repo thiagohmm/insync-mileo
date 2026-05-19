@@ -135,3 +135,47 @@ func TestSecureCreateLocalFileRejectsSymlinkDestination(t *testing.T) {
 		t.Fatal("expected symlink destination to be rejected")
 	}
 }
+
+func TestGoogleExportMime(t *testing.T) {
+	tests := []struct {
+		input  string
+		output string
+	}{
+		{"application/vnd.google-apps.document", "application/pdf"},
+		{"application/vnd.google-apps.spreadsheet", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+		{"application/vnd.google-apps.presentation", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+		{"application/vnd.google-apps.drawing", "application/pdf"},
+		{"application/vnd.google-apps.form", "application/pdf"},
+		{"application/vnd.google-apps.unknown", "application/pdf"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := GoogleExportMime(tt.input)
+			if got != tt.output {
+				t.Errorf("GoogleExportMime(%q) = %q, want %q", tt.input, got, tt.output)
+			}
+		})
+	}
+}
+
+func TestEnsureExportExtension(t *testing.T) {
+	tests := []struct {
+		path   string
+		mime   string
+		expect string
+	}{
+		{"documento", "application/pdf", "documento.pdf"},
+		{"planilha", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "planilha.xlsx"},
+		{"apresentacao", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "apresentacao.pptx"},
+		{"arquivo.txt", "application/pdf", "arquivo.txt"},
+		{"arquivo.docx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "arquivo.docx"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got := EnsureExportExtension(tt.path, tt.mime)
+			if got != tt.expect {
+				t.Errorf("EnsureExportExtension(%q, %q) = %q, want %q", tt.path, tt.mime, got, tt.expect)
+			}
+		})
+	}
+}

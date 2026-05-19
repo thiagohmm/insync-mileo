@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thiagohmm/insync-clone/internal/domain"
+	"google.golang.org/api/googleapi"
 )
 
 func TestSyncUseCaseNew(t *testing.T) {
@@ -645,5 +646,216 @@ func TestSyncUseCase_ErrgroupConcurrency(t *testing.T) {
 		if meta == nil {
 			t.Errorf("expected metadata for file-%d.txt", i)
 		}
+	}
+}
+
+// -----------------------------
+// 404 / 403 error handling tests
+// -----------------------------
+
+func TestSyncUseCase_Download404Error_RemovesStaleMetadata(t *testing.T) {
+	repo := domain.NewMockRepository()
+	cloudSvc := domain.NewMockCloudService(domain.GoogleDrive)
+
+	apiErr := &googleapi.Error{Code: 404, Message: "File not found"}
+	cloudSvc.DownloadError = apiErr
+
+	tmpDir := t.TempDir()
+	localPath := filepath.Join(tmpDir, "sync-404")
+	os.MkdirAll(localPath, 0755)
+
+	cfg := &domain.SyncConfig{
+		AccountID:      "acct-404",
+		LocalPath:      localPath,
+		RemoteFolderID: "remote-404",
+		Mode:           domain.BaseSync,
+		Provider:       domain.GoogleDrive,
+		IsDirectory:    true,
+	}
+	if err := repo.SaveSyncConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("SaveSyncConfig() error: %v", err)
+	}
+
+	cloudSvc.Files = []domain.FileMetadata{
+		{Path: "deleted-file.txt", ETag: "etag-deleted", Size: 100, IsDirectory: false},
+	}
+
+	suc := NewSyncUseCase(repo, []domain.CloudService{cloudSvc})
+	err := suc.SyncFolder(context.Background(), *cfg)
+	if err != nil {
+		t.Errorf("SyncFolder() should not return error for 404: %v", err)
+	}
+}
+
+func TestSyncUseCase_Download403Error_SkipsGracefully(t *testing.T) {
+	repo := domain.NewMockRepository()
+	cloudSvc := domain.NewMockCloudService(domain.GoogleDrive)
+
+	apiErr := &googleapi.Error{Code: 403, Message: "fileNotDownloadable"}
+	cloudSvc.DownloadError = apiErr
+
+	tmpDir := t.TempDir()
+	localPath := filepath.Join(tmpDir, "sync-403")
+	os.MkdirAll(localPath, 0755)
+
+	cfg := &domain.SyncConfig{
+		AccountID:      "acct-403",
+		LocalPath:      localPath,
+		RemoteFolderID: "remote-403",
+		Mode:           domain.BaseSync,
+		Provider:       domain.GoogleDrive,
+		IsDirectory:    true,
+	}
+	if err := repo.SaveSyncConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("SaveSyncConfig() error: %v", err)
+	}
+
+	cloudSvc.Files = []domain.FileMetadata{
+		{Path: "google-doc.txt", ETag: "etag-docs", Size: 100, IsDirectory: false},
+	}
+
+	suc := NewSyncUseCase(repo, []domain.CloudService{cloudSvc})
+	err := suc.SyncFolder(context.Background(), *cfg)
+	if err != nil {
+		t.Errorf("SyncFolder() should not return error for 403: %v", err)
+	}
+}
+
+func TestSyncUseCase_SyncSingleFile_404_RemovesMetadata(t *testing.T) {
+	repo := domain.NewMockRepository()
+	cloudSvc := domain.NewMockCloudService(domain.GoogleDrive)
+
+	apiErr := &googleapi.Error{Code: 404, Message: "File not found"}
+	cloudSvc.DownloadError = apiErr
+
+	tmpDir := t.TempDir()
+	localPath := filepath.Join(tmpDir, "single-404.txt")
+
+	cfg := &domain.SyncConfig{
+		AccountID:      "acct-single-404",
+		LocalPath:      localPath,
+		RemoteFolderID: "remote-file-404",
+		Mode:           domain.BaseSync,
+		Provider:       domain.GoogleDrive,
+		IsDirectory:    false,
+	}
+	if err := repo.SaveSyncConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("SaveSyncConfig() error: %v", err)
+	}
+
+	// Pre-existing metadata to clean up
+	if err := repo.UpdateFileMetadata(context.Background(), &domain.FileMetadata{
+		SyncConfigID: cfg.ID,
+		Path:         "single-404.txt",
+		ETag:         "remote-file-404",
+		Size:         100,
+	}); err != nil {
+		t.Fatalf("UpdateFileMetadata() error: %v", err)
+	}
+
+	suc := NewSyncUseCase(repo, []domain.CloudService{cloudSvc})
+	err := suc.SyncFolder(context.Background(), *cfg)
+	if err != nil {
+		t.Errorf("SyncFolder() should not return error for 404 single file: %v", err)
+	}
+}
+
+func TestSyncUseCase_SyncSingleFile_403_SkipsGracefully(t *testing.T) {
+	repo := domain.NewMockRepository()
+	cloudSvc := domain.NewMockCloudService(domain.GoogleDrive)
+
+	apiErr := &googleapi.Error{Code: 403, Message: "fileNotDownloadable"}
+	cloudSvc.DownloadError = apiErr
+
+	tmpDir := t.TempDir()
+	localPath := filepath.Join(tmpDir, "single-403.txt")
+
+	cfg := &domain.SyncConfig{
+		AccountID:      "acct-single-403",
+		LocalPath:      localPath,
+		RemoteFolderID: "remote-file-403",
+		Mode:           domain.BaseSync,
+		Provider:       domain.GoogleDrive,
+		IsDirectory:    false,
+	}
+	if err := repo.SaveSyncConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("SaveSyncConfig() error: %v", err)
+	}
+
+	suc := NewSyncUseCase(repo, []domain.CloudService{cloudSvc})
+	err := suc.SyncFolder(context.Background(), *cfg)
+	if err != nil {
+		t.Errorf("SyncFolder() should not return error for 403 single file: %v", err)
+	}
+}
+
+func TestSyncUseCase_DownloadOtherError_ReturnsError(t *testing.T) {
+	repo := domain.NewMockRepository()
+	cloudSvc := domain.NewMockCloudService(domain.GoogleDrive)
+
+	// Non-googleapi error — should propagate
+	cloudSvc.DownloadError = fmt.Errorf("network timeout")
+
+	tmpDir := t.TempDir()
+	localPath := filepath.Join(tmpDir, "sync-err")
+	os.MkdirAll(localPath, 0755)
+
+	cfg := &domain.SyncConfig{
+		AccountID:      "acct-err",
+		LocalPath:      localPath,
+		RemoteFolderID: "remote-err",
+		Mode:           domain.BaseSync,
+		Provider:       domain.GoogleDrive,
+		IsDirectory:    true,
+	}
+	if err := repo.SaveSyncConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("SaveSyncConfig() error: %v", err)
+	}
+
+	cloudSvc.Files = []domain.FileMetadata{
+		{Path: "network-fail.txt", ETag: "etag-fail", Size: 100, IsDirectory: false},
+	}
+
+	suc := NewSyncUseCase(repo, []domain.CloudService{cloudSvc})
+	err := suc.SyncFolder(context.Background(), *cfg)
+	// Should not return error at top-level (download errors are logged, not propagated)
+	if err != nil {
+		t.Errorf("SyncFolder() unexpected error: %v", err)
+	}
+}
+
+func TestSyncUseCase_DownloadMixedErrors_404And403(t *testing.T) {
+	repo := domain.NewMockRepository()
+
+	err404 := &googleapi.Error{Code: 404, Message: "not found"}
+
+	cloudSvc := domain.NewMockCloudService(domain.GoogleDrive)
+	cloudSvc.DownloadError = err404
+
+	tmpDir := t.TempDir()
+	localPath := filepath.Join(tmpDir, "sync-mixed")
+	os.MkdirAll(localPath, 0755)
+
+	cfg := &domain.SyncConfig{
+		AccountID:      "acct-mixed",
+		LocalPath:      localPath,
+		RemoteFolderID: "remote-mixed",
+		Mode:           domain.BaseSync,
+		Provider:       domain.GoogleDrive,
+		IsDirectory:    true,
+	}
+	if err := repo.SaveSyncConfig(context.Background(), cfg); err != nil {
+		t.Fatalf("SaveSyncConfig() error: %v", err)
+	}
+
+	cloudSvc.Files = []domain.FileMetadata{
+		{Path: "file-404.txt", ETag: "etag-404", Size: 100, IsDirectory: false},
+		{Path: "file-403.txt", ETag: "etag-403", Size: 200, IsDirectory: false},
+	}
+
+	suc := NewSyncUseCase(repo, []domain.CloudService{cloudSvc})
+	err := suc.SyncFolder(context.Background(), *cfg)
+	if err != nil {
+		t.Errorf("SyncFolder() should not return error with mixed 404/403: %v", err)
 	}
 }

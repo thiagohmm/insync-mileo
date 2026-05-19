@@ -79,50 +79,44 @@ func (g *googleDriveService) UploadFile(ctx context.Context, localPath string, r
 }
 
 func (g *googleDriveService) DownloadFile(ctx context.Context, remoteFileID string, localPath string) error {
-	res, err := g.service.Files.Get(remoteFileID).Download()
+	body, path, err := g.downloadBody(ctx, remoteFileID, localPath)
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
+	defer body.Close()
 
-	out, err := secureCreateLocalFile(localPath)
+	out, err := secureCreateLocalFile(path)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
 
-	_, err = io.Copy(out, res.Body)
+	_, err = io.Copy(out, body)
 	return err
 }
 
 func (g *googleDriveService) DownloadFileWithProgress(ctx context.Context, remoteFileID string, localPath string, onProgress func(downloaded, total int64)) error {
-	res, err := g.service.Files.Get(remoteFileID).Download()
+	body, path, err := g.downloadBody(ctx, remoteFileID, localPath)
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
+	defer body.Close()
 
-	// Get total size from response headers or metadata
+	// Get total size from metadata fallback
 	var totalSize int64
-	if res.ContentLength > 0 {
-		totalSize = res.ContentLength
-	} else {
-		// Fallback: fetch metadata to get size
-		meta, err := g.service.Files.Get(remoteFileID).Fields("size").Do()
-		if err == nil && meta.Size > 0 {
-			totalSize = meta.Size
-		}
+	meta, err := g.service.Files.Get(remoteFileID).Fields("size").Do()
+	if err == nil && meta.Size > 0 {
+		totalSize = meta.Size
 	}
 
-	out, err := secureCreateLocalFile(localPath)
+	out, err := secureCreateLocalFile(path)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
 
-	// Wrap the reader with progress tracking
 	wrapped := &progressReader{
-		reader:     res.Body,
+		reader:     body,
 		total:      totalSize,
 		onProgress: onProgress,
 	}
@@ -160,6 +154,38 @@ func (g *googleDriveService) GetFileChecksum(ctx context.Context, remoteFileID s
 		return "", err
 	}
 	return file.Md5Checksum, nil
+}
+
+func (g *googleDriveService) GetFileMimeType(ctx context.Context, remoteFileID string) (string, error) {
+	file, err := g.service.Files.Get(remoteFileID).Fields("mimeType").Context(ctx).Do()
+	if err != nil {
+		return "", err
+	}
+	return file.MimeType, nil
+}
+
+// downloadBody fetches the file body from Drive, using Export for Google Docs files.
+// It returns the body reader, the (possibly adjusted) local path, and any error.
+func (g *googleDriveService) downloadBody(ctx context.Context, remoteFileID string, localPath string) (io.ReadCloser, string, error) {
+	mimeType, err := g.GetFileMimeType(ctx, remoteFileID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	if strings.HasPrefix(mimeType, "application/vnd.google-apps.") {
+		exportMime := GoogleExportMime(mimeType)
+		res, err := g.service.Files.Export(remoteFileID, exportMime).Context(ctx).Download()
+		if err != nil {
+			return nil, "", err
+		}
+		return res.Body, EnsureExportExtension(localPath, exportMime), nil
+	}
+
+	res, err := g.service.Files.Get(remoteFileID).Context(ctx).Download()
+	if err != nil {
+		return nil, "", err
+	}
+	return res.Body, localPath, nil
 }
 
 func driveParentQuery(folderID string) string {
@@ -218,4 +244,31 @@ func ensurePathHasNoSymlink(path string) error {
 		}
 	}
 	return nil
+}
+
+// GoogleExportMime returns the appropriate export MIME type for a Google Docs file.
+func GoogleExportMime(mimeType string) string {
+	switch mimeType {
+	case "application/vnd.google-apps.spreadsheet":
+		return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+	case "application/vnd.google-apps.presentation":
+		return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+	default:
+		return "application/pdf"
+	}
+}
+
+// EnsureExportExtension ensures the local path has the correct extension for the export MIME type.
+func EnsureExportExtension(path string, exportMime string) string {
+	if filepath.Ext(path) != "" {
+		return path
+	}
+	switch exportMime {
+	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		return path + ".xlsx"
+	case "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+		return path + ".pptx"
+	default:
+		return path + ".pdf"
+	}
 }

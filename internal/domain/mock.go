@@ -16,6 +16,7 @@ type MockRepository struct {
 	DedupKeys         map[string]*FileDeduplicationKey
 	SyncTasks         []SyncTask
 	WebhookConfigs    []WebhookConfig
+	ProxyConfig       *ProxyConfig
 	SavedAccount      *Account
 	SavedSyncConfig   *SyncConfig
 	SavedFileMetadata *FileMetadata
@@ -391,12 +392,42 @@ func (m *MockRepository) DeleteWebhookConfig(_ context.Context, id int64) error 
 	return nil
 }
 
+func (m *MockRepository) SaveProxyConfig(_ context.Context, config *ProxyConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.ErrorOn["SaveProxyConfig"]; err != nil {
+		return err
+	}
+	m.ProxyConfig = &ProxyConfig{
+		Host:     config.Host,
+		Port:     config.Port,
+		User:     config.User,
+		Password: config.Password,
+		Enabled:  config.Enabled,
+	}
+	return nil
+}
+
+func (m *MockRepository) GetProxyConfig(_ context.Context) (*ProxyConfig, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.ErrorOn["GetProxyConfig"]; err != nil {
+		return nil, err
+	}
+	if m.ProxyConfig == nil {
+		return nil, nil
+	}
+	cp := *m.ProxyConfig
+	return &cp, nil
+}
+
 // MockCloudService implements CloudService for testing
 type MockCloudService struct {
 	Provider      Provider
 	Files         []FileMetadata
 	UploadResult  string
 	Checksum      string
+	MimeType      string
 	UploadError   error
 	DownloadError error
 	DeleteError   error
@@ -472,6 +503,18 @@ func (m *MockCloudService) GetFileChecksum(_ context.Context, remoteFileID strin
 	for _, file := range m.Files {
 		if file.ETag == remoteFileID {
 			return file.MD5Checksum, nil
+		}
+	}
+	return "", nil
+}
+
+func (m *MockCloudService) GetFileMimeType(_ context.Context, remoteFileID string) (string, error) {
+	if m.MimeType != "" {
+		return m.MimeType, nil
+	}
+	for _, file := range m.Files {
+		if file.ETag == remoteFileID {
+			return file.MimeType, nil
 		}
 	}
 	return "", nil

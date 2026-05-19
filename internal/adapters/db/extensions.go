@@ -182,6 +182,29 @@ func (r *SQLiteRepository) DeleteWebhookConfig(ctx context.Context, id int64) er
 	})
 }
 
+// Proxy methods
+
+func (r *SQLiteRepository) SaveProxyConfig(ctx context.Context, config *domain.ProxyConfig) error {
+	query := `INSERT OR REPLACE INTO proxy_config (id, host, port, user, password, enabled) VALUES (1, ?, ?, ?, ?, ?)`
+	return r.retryOnBusy(ctx, func() error {
+		_, err := r.db.ExecContext(ctx, query, config.Host, config.Port, config.User, config.Password, config.Enabled)
+		return err
+	})
+}
+
+func (r *SQLiteRepository) GetProxyConfig(ctx context.Context) (*domain.ProxyConfig, error) {
+	query := `SELECT id, host, port, user, password, enabled FROM proxy_config WHERE id = 1`
+	row := r.db.QueryRowContext(ctx, query)
+	var c domain.ProxyConfig
+	if err := row.Scan(&c.ID, &c.Host, &c.Port, &c.User, &c.Password, &c.Enabled); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &c, nil
+}
+
 // Add new tables for advanced features
 func (r *SQLiteRepository) createAdvancedTables() error {
 	queries := []string{
@@ -230,6 +253,20 @@ func (r *SQLiteRepository) createAdvancedTables() error {
 		`CREATE INDEX IF NOT EXISTS idx_sync_tasks_status ON sync_tasks(status);`,
 		`CREATE INDEX IF NOT EXISTS idx_sync_tasks_config ON sync_tasks(sync_config_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_webhook_configs_sync ON webhook_configs(sync_config_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_dedup_keys_size ON deduplication_keys(size);`,
+	}
+
+	// Proxy config table (singleton, id=1)
+	proxyQuery := `CREATE TABLE IF NOT EXISTS proxy_config (
+		id INTEGER PRIMARY KEY,
+		host TEXT NOT NULL DEFAULT '',
+		port INTEGER NOT NULL DEFAULT 0,
+		user TEXT NOT NULL DEFAULT '',
+		password TEXT NOT NULL DEFAULT '',
+		enabled BOOLEAN NOT NULL DEFAULT 0
+	);`
+	if _, err := r.db.Exec(proxyQuery); err != nil {
+		return fmt.Errorf("failed to create proxy_config table: %w", err)
 	}
 
 	for _, query := range indexes {

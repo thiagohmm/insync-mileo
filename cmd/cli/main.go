@@ -106,6 +106,7 @@ const (
 	stateBrowsing
 	stateLocalPath
 	stateConfirmExit
+	stateProxy
 )
 
 type model struct {
@@ -125,6 +126,14 @@ type model struct {
 	lastLocalRoot string
 	confirmText   string // "s" ou "n"
 	alreadyAuthed bool   // indica se já existe conta autenticada válida
+	// Proxy config fields
+	proxyHostInput     textinput.Model
+	proxyPortInput     textinput.Model
+	proxyUserInput     textinput.Model
+	proxyPassInput     textinput.Model
+	proxyEnabled       bool
+	proxyFocusedField  int // 0=host, 1=port, 2=user, 3=pass
+	currentProxyStatus string
 }
 
 func initialModel(client insync.InsyncServiceClient) model {
@@ -148,6 +157,14 @@ func initialModel(client insync.InsyncServiceClient) model {
 	m.list.SetShowFilter(true)
 	m.list.Filter = fuzzyFilter
 	m.list.DisableQuitKeybindings()
+
+	// Initialize proxy textinputs
+	m.proxyHostInput = newTextInput("proxy host (e.g. 127.0.0.1)", 80)
+	m.proxyPortInput = newTextInput("proxy port (e.g. 8080)", 80)
+	m.proxyUserInput = newTextInput("proxy user (optional)", 80)
+	m.proxyPassInput = newTextInput("proxy password (optional)", 80)
+	m.proxyPassInput.EchoMode = textinput.EchoPassword
+	m.proxyPassInput.EchoCharacter = '*'
 
 	// Substituir KeyMap para evitar conflito com 'b' e 'f'
 	m.list.KeyMap.PrevPage.SetKeys("left", "h", "pgup")
@@ -192,6 +209,15 @@ func initialModel(client insync.InsyncServiceClient) model {
 	}
 
 	return m
+}
+
+func newTextInput(placeholder string, width int) textinput.Model {
+	ti := textinput.New()
+	ti.Placeholder = placeholder
+	ti.Prompt = ""
+	ti.CharLimit = 256
+	ti.Width = width
+	return ti
 }
 
 func (m model) afterAuthSuccess() (model, tea.Cmd) {
@@ -570,6 +596,85 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// --- stateProxy ---
+		if m.state == stateProxy {
+			switch key {
+			case "esc":
+				m.state = stateBrowsing
+				m.status = m.currentProxyStatus
+				return m, nil
+			case "tab":
+				m.proxyFocusedField = (m.proxyFocusedField + 1) % 4
+				var cmds []tea.Cmd
+				switch m.proxyFocusedField {
+				case 0:
+					m.proxyHostInput.Focus()
+				case 1:
+					m.proxyPortInput.Focus()
+				case 2:
+					m.proxyUserInput.Focus()
+				case 3:
+					m.proxyPassInput.Focus()
+				}
+				if m.proxyFocusedField == 0 {
+					m.proxyHostInput.Focus()
+					cmds = append(cmds, m.proxyHostInput.Focus())
+				}
+				return m, tea.Batch(cmds...)
+			case "enter":
+				host := strings.TrimSpace(m.proxyHostInput.Value())
+				portStr := strings.TrimSpace(m.proxyPortInput.Value())
+				user := strings.TrimSpace(m.proxyUserInput.Value())
+				pass := strings.TrimSpace(m.proxyPassInput.Value())
+
+				var port int
+				if portStr != "" {
+					fmt.Sscanf(portStr, "%d", &port)
+				}
+
+				m.status = "Salvando configuração do proxy..."
+				res, err := m.client.ConfigureProxy(m.ctx, &insync.ConfigureProxyRequest{
+					Host:     host,
+					Port:     int32(port),
+					User:     user,
+					Password: pass,
+					Enabled:  m.proxyEnabled,
+				})
+				if err != nil {
+					m.status = "Erro ao configurar proxy: " + err.Error()
+					m.state = stateBrowsing
+					return m, nil
+				}
+				if !res.Success {
+					m.status = "Erro ao configurar proxy: " + res.ErrorMessage
+					m.state = stateBrowsing
+					return m, nil
+				}
+				if m.proxyEnabled {
+					m.status = fmt.Sprintf("Proxy configurado: %s:%d", host, port)
+				} else {
+					m.status = "Proxy desabilitado"
+				}
+				m.state = stateBrowsing
+				m.currentProxyStatus = m.status
+				return m, nil
+			}
+
+			// Handle textinput updates for focused field
+			var cmd tea.Cmd
+			switch m.proxyFocusedField {
+			case 0:
+				m.proxyHostInput, cmd = m.proxyHostInput.Update(msg)
+			case 1:
+				m.proxyPortInput, cmd = m.proxyPortInput.Update(msg)
+			case 2:
+				m.proxyUserInput, cmd = m.proxyUserInput.Update(msg)
+			case 3:
+				m.proxyPassInput, cmd = m.proxyPassInput.Update(msg)
+			}
+			return m, cmd
+		}
+
 		// --- stateBrowsing ---
 		if m.state == stateBrowsing {
 			if m.list.FilterState() != list.Filtering {
@@ -583,6 +688,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "f":
 					model, cmd := m.toggleSyncForSelection(insync.SyncMode_FULL_SYNC)
 					return model, cmd
+				case "x":
+					m.state = stateProxy
+					m.proxyFocusedField = 0
+					m.proxyHostInput.SetValue("")
+					m.proxyPortInput.SetValue("")
+					m.proxyUserInput.SetValue("")
+					m.proxyPassInput.SetValue("")
+					m.proxyEnabled = false
+					m.status = "Configurar proxy HTTP — Tab navegar | Enter salvar | Esc cancelar"
+					var cmds []tea.Cmd
+					cmds = append(cmds, m.proxyHostInput.Focus())
+					return m, tea.Batch(cmds...)
 				case "p":
 					m.state = stateLocalPath
 					if m.lastLocalRoot != "" {
@@ -776,6 +893,28 @@ func (m model) View() string {
 	} else if m.state == stateConfirmExit {
 		s = docStyle.Render(m.list.View())
 		s += "\n\n" + fmt.Sprintf("⚠ %s [%s]", m.status, m.confirmText) + "▌\n"
+	} else if m.state == stateProxy {
+		enabledStr := "não"
+		if m.proxyEnabled {
+			enabledStr = "sim"
+		}
+		proxyView := fmt.Sprintf(
+			"Configurar Proxy HTTP\n\n"+
+				"Host:   %s\n"+
+				"Port:   %s\n"+
+				"User:   %s\n"+
+				"Pass:   %s\n\n"+
+				"Enabled: [%s]\n\n"+
+				"Tab: navegar campos\n"+
+				"Enter: salvar\n"+
+				"Esc: cancelar",
+			m.proxyHostInput.View(),
+			m.proxyPortInput.View(),
+			m.proxyUserInput.View(),
+			m.proxyPassInput.View(),
+			enabledStr,
+		)
+		s = docStyle.Render(proxyView)
 	} else {
 		s = docStyle.Render(m.list.View())
 		s += "\n\n" + m.status + "\n"
@@ -786,7 +925,7 @@ func (m model) View() string {
 		s += "\n" + m.progress.View() + "\n"
 	}
 
-	s += "\n/ buscar | esc sair (s/n) | u unsync | b base-sync | f full-sync | p caminho | ctrl+c\n"
+	s += "\n/ buscar | esc sair | u unsync | b base | f full | p caminho | x proxy | ctrl+c\n"
 	return s
 }
 

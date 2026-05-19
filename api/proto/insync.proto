@@ -17,6 +17,10 @@ service InsyncService {
   // Listagem de arquivos
   rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
   rpc ListSyncedFiles(ListSyncedFilesRequest) returns (ListSyncedFilesResponse);
+
+  // Proxy configuration
+  rpc ConfigureProxy(ConfigureProxyRequest) returns (ConfigureProxyResponse);
+  rpc GetProxyConfig(GetProxyConfigRequest) returns (GetProxyConfigResponse);
 }
 
 enum SyncMode {
@@ -106,4 +110,29 @@ message UnsyncRequest {
 message UnsyncResponse {
   bool success = 1;
   string error_message = 2;
+}
+
+message ConfigureProxyRequest {
+  string host = 1;
+  int32 port = 2;
+  string user = 3;
+  string password = 4;
+  bool enabled = 5;
+}
+
+message ConfigureProxyResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message GetProxyConfigRequest {}
+
+message GetProxyConfigResponse {
+  bool success = 1;
+  string error_message = 2;
+  string host = 3;
+  int32 port = 4;
+  string user = 5;
+  string password_masked = 6;
+  bool enabled = 7;
 }

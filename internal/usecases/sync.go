@@ -17,6 +17,7 @@ import (
 	"golang.org/x/oauth2/google"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 )
 
@@ -137,6 +138,19 @@ func (s *syncUseCase) SyncFolder(ctx context.Context, config domain.SyncConfig) 
 			localPath := localPath
 			downloadGrp.Go(func() error {
 				if err := s.downloadFileWithProgress(downloadCtx, remote, localPath, config, cloudSvc); err != nil {
+					if gErr, ok := err.(*googleapi.Error); ok && gErr.Code == 404 {
+						log.Printf("skipping %s: file not found in cloud (deleted)", remote.Path)
+						if errDel := s.repo.DeleteFileMetadata(downloadCtx, config.ID, remote.Path); errDel != nil {
+							log.Printf("DeleteFileMetadata %s: %v", remote.Path, errDel)
+						}
+						s.sendStatus(remote.Path, "Skipped (deleted in cloud)", 0, remote.Size)
+						return nil
+					}
+					if gErr, ok := err.(*googleapi.Error); ok && gErr.Code == 403 {
+						log.Printf("skipping %s: file not downloadable (%v)", remote.Path, gErr.Message)
+						s.sendStatus(remote.Path, "Skipped (not downloadable)", 0, remote.Size)
+						return nil
+					}
 					s.sendStatus(remote.Path, "Error", 0, remote.Size)
 					return fmt.Errorf("download %s: %w", remote.Path, err)
 				}
@@ -285,6 +299,21 @@ func (s *syncUseCase) syncSingleFile(ctx context.Context, config domain.SyncConf
 			remote.MD5Checksum = checksum
 		}
 		if err := s.downloadFileWithProgress(ctx, remote, config.LocalPath, config, cloudSvc); err != nil {
+			if gErr, ok := err.(*googleapi.Error); ok && gErr.Code == 404 {
+				log.Printf("single file %s not found in cloud, cleaning up metadata", remote.Path)
+				if md != nil {
+					if errDel := s.repo.DeleteFileMetadata(ctx, config.ID, md.Path); errDel != nil {
+						log.Printf("DeleteFileMetadata %s: %v", md.Path, errDel)
+					}
+				}
+				s.sendStatus(remote.Path, "Skipped (deleted in cloud)", 0, 0)
+				return nil
+			}
+			if gErr, ok := err.(*googleapi.Error); ok && gErr.Code == 403 {
+				log.Printf("single file %s not downloadable: %v", remote.Path, gErr.Message)
+				s.sendStatus(remote.Path, "Skipped (not downloadable)", 0, 0)
+				return nil
+			}
 			s.sendStatus(remote.Path, "Error", 0, 0)
 			return fmt.Errorf("download single file %s: %w", remote.Path, err)
 		}
