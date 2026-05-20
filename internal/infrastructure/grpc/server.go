@@ -131,15 +131,30 @@ func (s *Server) startCallbackServer() {
 			return
 		}
 		if code != "" {
+			resp, err := s.AddAccount(context.Background(), &insync.AddAccountRequest{
+				AuthCode: code,
+			})
+			if err != nil {
+				fmt.Fprintf(w, "<html><body style='font-family:sans-serif;padding-top:50px;text-align:center;'>")
+				fmt.Fprintf(w, "<h1 style='color:#F44336;'>Erro na Autenticação</h1>")
+				fmt.Fprintf(w, "<p>Erro: %v</p>", err.Error())
+				fmt.Fprintf(w, "<p>Tente novamente e verifique se as credenciais OAuth estão configuradas corretamente.</p>")
+				fmt.Fprintf(w, "</body></html>")
+				return
+			}
+			if resp != nil && !resp.Success {
+				fmt.Fprintf(w, "<html><body style='font-family:sans-serif;padding-top:50px;text-align:center;'>")
+				fmt.Fprintf(w, "<h1 style='color:#F44336;'>Erro na Autenticação</h1>")
+				fmt.Fprintf(w, "<p>Erro: %s</p>", resp.ErrorMessage)
+				fmt.Fprintf(w, "<p>Tente novamente e verifique se as credenciais OAuth estão configuradas corretamente.</p>")
+				fmt.Fprintf(w, "</body></html>")
+				return
+			}
+
 			fmt.Fprintf(w, "<html><body style='font-family:sans-serif;padding-top:50px;text-align:center;'>")
 			fmt.Fprintf(w, "<h1 style='color:#4CAF50;'>Autenticação Concluída!</h1>")
 			fmt.Fprintf(w, "<p>O Insync Clone já recebeu suas credenciais. Volte para o terminal.</p>")
 			fmt.Fprintf(w, "</body></html>")
-
-			// Processa o login imediatamente
-			s.AddAccount(context.Background(), &insync.AddAccountRequest{
-				AuthCode: code,
-			})
 
 			go func() {
 				time.Sleep(1 * time.Second)
@@ -185,6 +200,9 @@ func (s *Server) AddAccount(ctx context.Context, req *insync.AddAccountRequest) 
 		return &insync.AddAccountResponse{Success: false, ErrorMessage: fmt.Sprintf("falha ao trocar código por token: %v", err)}, nil
 	}
 
+	fmt.Printf("[DEBUG] AddAccount - Token recebido: AccessToken=%q, RefreshToken=%q, Expiry=%v, TokenType=%s\n",
+		token.AccessToken, token.RefreshToken, token.Expiry, token.TokenType)
+
 	acc := &domain.Account{
 		ID:           "google-" + time.Now().Format("150405"),
 		Provider:     domain.GoogleDrive,
@@ -194,6 +212,13 @@ func (s *Server) AddAccount(ctx context.Context, req *insync.AddAccountRequest) 
 	}
 
 	s.repo.SaveAccount(ctx, acc)
+
+	// Read back to verify
+	accRead, _ := s.repo.GetAccount(ctx, acc.ID)
+	if accRead != nil {
+		fmt.Printf("[DEBUG] AddAccount - Token lido de volta: AccessToken=%q, RefreshToken=%q, Expiry=%v\n",
+			accRead.AccessToken, accRead.RefreshToken, accRead.Expiry)
+	}
 	fmt.Printf("[DEBUG] AddAccount - Conta salva: ID=%s, HasAccessToken=%v, HasRefreshToken=%v\n", acc.ID, acc.AccessToken != "", acc.RefreshToken != "")
 	return &insync.AddAccountResponse{Success: true, AccountId: acc.ID}, nil
 }
@@ -300,6 +325,10 @@ func googleOAuthConfig() *oauth2.Config {
 	if cfg.ClientID == "" {
 		cfg.ClientID = "1092767661178-2a973gcsj0cip2oknvdkpsl31vugqrp4.apps.googleusercontent.com"
 	}
+	if cfg.ClientSecret == "" {
+		fmt.Printf("[FATAL] GOOGLE_CLIENT_SECRET não está definido!\n")
+	}
+	fmt.Printf("[DEBUG] googleOAuthConfig - ClientID=%s, ClientSecret=%q\n", cfg.ClientID, cfg.ClientSecret)
 	// Note: ClientSecret não tem fallback padrão - deve ser definido via variável de ambiente
 	return cfg
 }
@@ -371,9 +400,18 @@ func (s *Server) refreshAndRetry(ctx context.Context, acc *domain.Account, opera
 	}
 
 	// Attempt 1: use the current token (oauth2.Client auto-refreshes if near expiry)
-	httpClient := cfg.Client(ctx, tok)
+	var base http.RoundTripper
 	if pt := s.proxyRoundTripper(); pt != nil {
-		httpClient.Transport = pt
+		base = pt
+	} else {
+		base = http.DefaultTransport
+	}
+	tokenSrc := cfg.TokenSource(ctx, tok)
+	httpClient := &http.Client{
+		Transport: &oauth2.Transport{
+			Source: tokenSrc,
+			Base:   base,
+		},
 	}
 	ctxWithHTTPClient := context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 	if opErr := operation(ctxWithHTTPClient, tok); opErr != nil {
@@ -419,9 +457,21 @@ func (s *Server) isTokenValid(ctx context.Context, acc *domain.Account) bool {
 		Expiry:       acc.Expiry.Time,
 	}
 
-	httpClient := cfg.Client(ctx, tok)
+	fmt.Printf("[DEBUG] isTokenValid - Token: AccessToken=%q, RefreshToken=%q, Expiry=%v\n",
+		tok.AccessToken, tok.RefreshToken, tok.Expiry)
+
+	var base http.RoundTripper
 	if pt := s.proxyRoundTripper(); pt != nil {
-		httpClient.Transport = pt
+		base = pt
+	} else {
+		base = http.DefaultTransport
+	}
+	tokenSrc := cfg.TokenSource(ctx, tok)
+	httpClient := &http.Client{
+		Transport: &oauth2.Transport{
+			Source: tokenSrc,
+			Base:   base,
+		},
 	}
 	driveSvc, err := drive.NewService(ctx, option.WithHTTPClient(httpClient))
 	if err != nil {
@@ -546,9 +596,18 @@ func (s *Server) googleDriveService(ctx context.Context, acc *domain.Account) (*
 		Expiry:       acc.Expiry.Time,
 	}
 
-	httpClient := cfg.Client(ctx, tok)
+	var base http.RoundTripper
 	if pt := s.proxyRoundTripper(); pt != nil {
-		httpClient.Transport = pt
+		base = pt
+	} else {
+		base = http.DefaultTransport
+	}
+	tokenSrc := cfg.TokenSource(ctx, tok)
+	httpClient := &http.Client{
+		Transport: &oauth2.Transport{
+			Source: tokenSrc,
+			Base:   base,
+		},
 	}
 	return drive.NewService(ctx, option.WithHTTPClient(httpClient))
 }

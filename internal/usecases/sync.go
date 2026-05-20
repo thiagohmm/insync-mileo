@@ -373,7 +373,7 @@ func (s *syncUseCase) cloudForConfig(ctx context.Context, config domain.SyncConf
 		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
 		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
 		Endpoint:     google.Endpoint,
-		RedirectURL:  "http://localhost:8080",
+		RedirectURL:  "http://127.0.0.1:8080",
 	}
 	if cfg.ClientID == "" {
 		cfg.ClientID = "1092767661178-2a973gcsj0cip2oknvdkpsl31vugqrp4.apps.googleusercontent.com"
